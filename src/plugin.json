@@ -1,0 +1,25 @@
+{
+  "$schema": "https://raw.githubusercontent.com/grafana/grafana/main/docs/sources/developers/plugins/plugin.schema.json",
+  "type": "panel",
+  "name": "dartsisas-attitude3d-panel",
+  "id": "dartsisas-attitude3d-panel",
+  "info": {
+  "keywords": ["panel"],
+  "description": "Grafana panel plugin for visualizing 3D model data (e.g. glTF) via WebGL. Provides model URL loading (CORS friendly), quaternion-based rotation, flexible centering modes, camera and light configuration (directional & ambient), data‑driven dynamic control from datasource fields, optional mouse camera interaction, and helper axes/center visualization. Ideal for attitude/orientation and viewpoint visualization from time‑series data.",
+    "author": {
+      "name": "ISAS/JAXA"
+    },
+    "logos": {
+      "small": "img/logo.svg",
+      "large": "img/logo.svg"
+    },
+    "links": [],
+    "screenshots": [],
+    "version": "%VERSION%",
+    "updated": "%TODAY%"
+  },
+  "dependencies": {
+    "grafanaDependency": ">=10.3.3",
+    "plugins": []
+  }
+}
