@@ -85,3 +85,6 @@ Licensed under the GNU Lesser General Public License v3.0.
 
 © 2025 ISAS/JAXA and [NAKAHIRA, Satoshi](https://orcid.org/0000-0001-9307-046X).
 
+## Acknowledgement
+
+This software was developed with the cooperation of [AstroArts Inc.](https://www.astroarts.co.jp/)
