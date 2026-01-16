@@ -1,6 +1,6 @@
 import React, { useEffect, useRef, useState } from 'react'
 import { DataFrame, PanelProps } from '@grafana/data'
-import { ModelRendererOptions } from 'types'
+import { Attitude3DOptions } from 'types'
 import { css, cx } from '@emotion/css'
 import { useStyles2, /*useTheme2*/ } from '@grafana/ui'
 import { getTemplateSrv, PanelDataErrorView } from '@grafana/runtime'
@@ -9,7 +9,7 @@ import { OrbitControls } from 'three-stdlib'
 import { GLTFLoader } from 'three/examples/jsm/loaders/GLTFLoader'
 import { OBJLoader } from 'three/examples/jsm/loaders/OBJLoader'
 
-interface Props extends PanelProps<ModelRendererOptions> {}
+interface Props extends PanelProps<Attitude3DOptions> {}
 
 const getStyles = () => {
   return {
@@ -75,7 +75,7 @@ const ColorTable: {[key: string]: string} = {
   'super-light-purple': 'rgb(222, 182, 242)',
 }
 
-const getColorDef = (color: string): {color: THREE.Color, transparency: boolean} => {
+const parseColor = (color: string): {color: THREE.Color, transparency: boolean} => {
   if (color.match(/^rgba/)) {
     const m = color.match(/^rgba\((\d+(?:\.\d+)?),(\d+(?:\.\d+)?),(\d+(?:\.\d+)?),(\d+(?:\.\d+)?)\)$/)
     if (m) {
@@ -125,7 +125,7 @@ const getColorDef = (color: string): {color: THREE.Color, transparency: boolean}
   return {color: new THREE.Color(color), transparency: false}
 }
 
-export const ModelRendererPanel: React.FC<Props> = ({ options, data, width, height, fieldConfig, id }) => {
+export const Attitude3DPanel: React.FC<Props> = ({ options, data, width, height, fieldConfig, id }) => {
   const initialized = useRef<boolean>(false)
 
   // const theme = useTheme2();
@@ -207,7 +207,7 @@ export const ModelRendererPanel: React.FC<Props> = ({ options, data, width, heig
     scene.current.add(pivot.current)
 
     // Initial Light Settings
-    directionalLight.current = new THREE.DirectionalLight(getColorDef(options.directionalLightColor).color)
+    directionalLight.current = new THREE.DirectionalLight(parseColor(options.directionalLightColor).color)
     directionalLight.current.position.set(
       - directionalLightDirectionX,
       - directionalLightDirectionY,
@@ -216,7 +216,7 @@ export const ModelRendererPanel: React.FC<Props> = ({ options, data, width, heig
     directionalLight.current.intensity = parseFloat(options.directionalLightIntensity)
     scene.current.add(directionalLight.current)
 
-    ambientLight.current = new THREE.AmbientLight(getColorDef(options.ambientLightColor).color)
+    ambientLight.current = new THREE.AmbientLight(parseColor(options.ambientLightColor).color)
     ambientLight.current.intensity = parseFloat(options.ambientLightIntensity)
     scene.current.add(ambientLight.current)
 
@@ -257,7 +257,7 @@ export const ModelRendererPanel: React.FC<Props> = ({ options, data, width, heig
   // Background Color
   useEffect(() => {
     if (!scene.current) { return }
-    const colorDef = getColorDef(options.backgroundColor)
+    const colorDef = parseColor(options.backgroundColor)
     if (colorDef.transparency) {
       scene.current.background = null
     }

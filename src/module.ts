@@ -1,8 +1,8 @@
 import { PanelPlugin } from '@grafana/data'
-import { ModelRendererOptions } from './types'
-import { ModelRendererPanel } from './components/ModelRendererPanel'
+import { Attitude3DOptions } from './types'
+import { Attitude3DPanel } from './components/Attitude3DPanel'
 
-export const plugin = new PanelPlugin<ModelRendererOptions>(ModelRendererPanel).setPanelOptions((builder) => {
+export const plugin = new PanelPlugin<Attitude3DOptions>(Attitude3DPanel).setPanelOptions((builder) => {
   return builder
     // Model
     .addTextInput({

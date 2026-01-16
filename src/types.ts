@@ -1,4 +1,4 @@
-export interface ModelRendererOptions {
+export interface Attitude3DOptions {
   // model
   modelURI: string;
   modelCenter: 'origin' | 'sphere' | 'average';
