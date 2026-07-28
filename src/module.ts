@@ -250,4 +250,38 @@ export const plugin = new PanelPlugin<Attitude3DOptions>(Attitude3DPanel).setPan
       description: 'Background color for the panel',
       defaultValue: '#000000',
     })
+    // Quaternion Interpolation
+    .addBooleanSwitch({
+      category: ['Quaternion Interpolation'],
+      path: 'quatInterpEnabled',
+      name: 'Enable',
+      description: 'Retain timestamped quaternions across refreshes and spherically interpolate to the end of the display range (${__to}). Typically this is extrapolation.',
+      defaultValue: false,
+      showIf: (options) => options?.modelRotationType === 'field',
+    })
+    .addFieldNamePicker({
+      category: ['Quaternion Interpolation'],
+      path: 'quatInterpTimeField',
+      name: 'Time Field',
+      description: 'Leave empty to auto-detect the time field of the frame',
+      showIf: (options) => options?.modelRotationType === 'field' && options?.quatInterpEnabled === true,
+    })
+    .addNumberInput({
+      category: ['Quaternion Interpolation'],
+      path: 'quatInterpBufferSize',
+      name: 'Retained Samples',
+      description: 'Number of timestamped quaternions retained across refreshes. 2 = constant angular velocity extrapolation.',
+      defaultValue: 2,
+      settings: { min: 2, integer: true },
+      showIf: (options) => options?.modelRotationType === 'field' && options?.quatInterpEnabled === true,
+    })
+    .addNumberInput({
+      category: ['Quaternion Interpolation'],
+      path: 'quatInterpMaxExtrapMs',
+      name: 'Max Extrapolation [ms]',
+      description: 'Stop extrapolating once the target time exceeds the newest sample by this much. 0 disables extrapolation.',
+      defaultValue: 5000,
+      settings: { min: 0 },
+      showIf: (options) => options?.modelRotationType === 'field' && options?.quatInterpEnabled === true,
+    })
 })

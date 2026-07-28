@@ -36,4 +36,10 @@ export interface Attitude3DOptions {
 
   // Background
   backgroundColor: string;
+
+  // Quaternion Interpolation
+  quatInterpEnabled: boolean;
+  quatInterpTimeField: string;
+  quatInterpBufferSize: number;
+  quatInterpMaxExtrapMs: number;
 }

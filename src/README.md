@@ -60,3 +60,14 @@ Panel for rendering 3D objects
   * Color of the background
 * Transparent
   * Transparent background
+
+### Quaternion Interpolation
+
+* Enable
+  * Retain timestamped quaternions across refreshes and spherically interpolate to the end of the display range (typically this is extrapolation). Default: off
+* Time Field
+  * Time field used for the retained quaternion samples. Leave empty to auto-detect
+* Retained Samples
+  * Number of timestamped quaternions retained across refreshes. 2 = constant angular velocity extrapolation. Default: 2
+* Max Extrapolation [ms]
+  * Stop extrapolating once the target time exceeds the newest sample by this much. 0 disables extrapolation. Default: 5000

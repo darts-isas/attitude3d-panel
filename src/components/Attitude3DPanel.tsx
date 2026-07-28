@@ -1,5 +1,5 @@
 import React, { useEffect, useRef, useState } from 'react'
-import { DataFrame, PanelProps } from '@grafana/data'
+import { DataFrame, LoadingState, PanelProps } from '@grafana/data'
 import { Attitude3DOptions } from 'types'
 import { css, cx } from '@emotion/css'
 import { useStyles2, /*useTheme2*/ } from '@grafana/ui'
@@ -8,6 +8,7 @@ import * as THREE from 'three'
 import { OrbitControls } from 'three-stdlib'
 import { GLTFLoader } from 'three/examples/jsm/loaders/GLTFLoader'
 import { OBJLoader } from 'three/examples/jsm/loaders/OBJLoader'
+import { collectQuatSamples, sampleQuaternionAt, QuatSample } from './quaternionInterp'
 
 interface Props extends PanelProps<Attitude3DOptions> {}
 
@@ -150,6 +151,26 @@ export const Attitude3DPanel: React.FC<Props> = ({ options, data, width, height,
 
   const axesHelper = useRef<THREE.AxesHelper | null>(null)
 
+  // Quaternion Interpolation
+  const quatBuffer = useRef<QuatSample[]>([])
+  const quatBufferKey = useRef<string>('')
+  const lastData = useRef<unknown>(null)
+  const dataArrivedAt = useRef<number>(Date.now())
+  const extrapState = useRef<{
+    enabled: boolean
+    timeRangeToMs: number
+    followNow: boolean
+    maxExtrapMs: number
+  } | null>(null)
+
+  // Stamp the arrival time during render, not in an effect: extrapState below is assigned
+  // during render too, so an effect-set stamp would pair a fresh timeRangeToMs with the
+  // previous arrival time and overshoot the target by one refresh interval.
+  if (lastData.current !== data) {
+    lastData.current = data
+    dataArrivedAt.current = Date.now()
+  }
+
   // Template
   const tmplSrv = getTemplateSrv()
 
@@ -165,6 +186,11 @@ export const Attitude3DPanel: React.FC<Props> = ({ options, data, width, height,
   const modelRotationZ = options.modelRotationType === 'field' ? getFieldValue(data.series, options.modelRotationZ) : parseInt(tmplSrv.replace(options.modelRotationZ + ''), 10) || 0
   const modelRotationW = options.modelRotationType === 'field' ? getFieldValue(data.series, options.modelRotationW) : parseInt(tmplSrv.replace(options.modelRotationW + ''), 10) || 0
 
+  // Quaternion Interpolation
+  const quatInterpEnabled = options.quatInterpEnabled === true && options.modelRotationType === 'field'
+  const bufferSize = Math.max(2, Math.floor(Number(options.quatInterpBufferSize) || 2))
+  const maxExtrapMs = Number.isFinite(Number(options.quatInterpMaxExtrapMs)) ? Math.max(0, Number(options.quatInterpMaxExtrapMs)) : 0
+
   const cameraDirectionX = options.cameraDirectionType === 'field' ? getFieldValue(data.series, options.cameraDirectionX) : parseInt(tmplSrv.replace(options.cameraDirectionX + ''), 10) || 0
   const cameraDirectionY = options.cameraDirectionType === 'field' ? getFieldValue(data.series, options.cameraDirectionY) : parseInt(tmplSrv.replace(options.cameraDirectionY + ''), 10) || 0
   const cameraDirectionZ = options.cameraDirectionType === 'field' ? getFieldValue(data.series, options.cameraDirectionZ) : parseInt(tmplSrv.replace(options.cameraDirectionZ + ''), 10) || 0
@@ -172,6 +198,88 @@ export const Attitude3DPanel: React.FC<Props> = ({ options, data, width, height,
   const directionalLightDirectionX = options.directionalLightDirectionType === 'field' ? getFieldValue(data.series, options.directionalLightDirectionX) : parseInt(tmplSrv.replace(options.directionalLightDirectionX + ''), 10) || 0
   const directionalLightDirectionY = options.directionalLightDirectionType === 'field' ? getFieldValue(data.series, options.directionalLightDirectionY) : parseInt(tmplSrv.replace(options.directionalLightDirectionY + ''), 10) || 0
   const directionalLightDirectionZ = options.directionalLightDirectionType === 'field' ? getFieldValue(data.series, options.directionalLightDirectionZ) : parseInt(tmplSrv.replace(options.directionalLightDirectionZ + ''), 10) || 0
+
+  // Quaternion Interpolation - collect samples into the buffer
+  useEffect(() => {
+    if (!quatInterpEnabled) {
+      quatBuffer.current = []
+      quatBufferKey.current = ''
+      return
+    }
+
+    if (data.state === LoadingState.Error) { return }
+
+    const key = [
+      options.modelRotationX,
+      options.modelRotationY,
+      options.modelRotationZ,
+      options.modelRotationW,
+      options.quatInterpTimeField,
+    ].join('|')
+    if (key !== quatBufferKey.current) {
+      quatBuffer.current = []
+      quatBufferKey.current = key
+    }
+
+    const incoming = collectQuatSamples(
+      data.series,
+      { x: options.modelRotationX, y: options.modelRotationY, z: options.modelRotationZ, w: options.modelRotationW },
+      options.quatInterpTimeField ?? '',
+      bufferSize,
+      dataArrivedAt.current,
+    )
+    if (incoming.length === 0) { return }
+
+    const buffer = quatBuffer.current
+    if (buffer.length !== 0 && incoming[incoming.length - 1].t < buffer[buffer.length - 1].t) {
+      // Time range moved/zoomed into the past: discard the stale buffer and adopt incoming as-is.
+      quatBuffer.current = [...incoming]
+    }
+    else {
+      const lastT = buffer.length !== 0 ? buffer[buffer.length - 1].t : -Infinity
+      const toAppend = incoming.filter(sample => sample.t > lastT)
+      if (toAppend.length !== 0) {
+        quatBuffer.current = [...buffer, ...toAppend]
+      }
+    }
+
+    if (quatBuffer.current.length > bufferSize) {
+      quatBuffer.current.splice(0, quatBuffer.current.length - bufferSize)
+    }
+  }, [
+    data, quatInterpEnabled,
+    options.modelRotationX, options.modelRotationY, options.modelRotationZ, options.modelRotationW,
+    options.quatInterpTimeField, bufferSize,
+  ])
+
+  // Quaternion Interpolation - refresh extrapolation state every render so the rAF loop
+  // (a closure created once in initRenderer) always sees the latest values via refs.
+  // Only a relative 'now...' range keeps advancing in real time. An absolute range may also
+  // arrive as an ISO string, so testing for a string alone would wrongly follow the clock.
+  const rawTo = data.timeRange?.raw?.to
+  const followNow = typeof rawTo === 'string' && rawTo.startsWith('now')
+  extrapState.current = {
+    enabled: quatInterpEnabled,
+    timeRangeToMs: data.timeRange ? data.timeRange.to.valueOf() : 0,
+    followNow,
+    maxExtrapMs,
+  }
+
+  // Applies the extrapolated/interpolated quaternion to the pivot. Reads only refs (no
+  // closed-over state), so calling it from the tick loop's stale closure is still correct.
+  const applyExtrapolatedRotation = () => {
+    const st = extrapState.current
+    if (!st || !st.enabled) { return }
+    if (!pivot.current) { return }
+
+    const target = st.followNow
+      ? st.timeRangeToMs + (Date.now() - dataArrivedAt.current)
+      : st.timeRangeToMs
+
+    const q = sampleQuaternionAt(quatBuffer.current, target, st.maxExtrapMs)
+    if (!q) { return }
+    pivot.current.quaternion.copy(q)
+  }
 
   // Initialize Renderer
   const initRenderer = () => {
@@ -224,6 +332,10 @@ export const Attitude3DPanel: React.FC<Props> = ({ options, data, width, height,
       requestAnimationFrame(tick)
 
       if (!scene.current || !camera.current || !renderer.current) { return }
+
+      // Reads only refs, so it stays correct even though tick is a closure created once.
+      applyExtrapolatedRotation()
+
       renderer.current.render(scene.current, camera.current)
       
       if (!controls.current) { return }
@@ -408,6 +520,9 @@ export const Attitude3DPanel: React.FC<Props> = ({ options, data, width, height,
 
   // Model Rotation
   useEffect(() => {
+    // Extrapolation mode drives pivot.quaternion from the rAF loop instead.
+    if (quatInterpEnabled) { return }
+
     if (!pivot.current) { return }
 
     const quaternion = new THREE.Quaternion(
@@ -417,7 +532,7 @@ export const Attitude3DPanel: React.FC<Props> = ({ options, data, width, height,
       modelRotationW,
     )
     pivot.current.rotation.setFromQuaternion(quaternion)
-  }, [modelRotationX, modelRotationY, modelRotationZ, modelRotationW])
+  }, [modelRotationX, modelRotationY, modelRotationZ, modelRotationW, quatInterpEnabled])
 
   // Model Center
   useEffect(() => {
