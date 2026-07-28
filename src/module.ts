@@ -9,16 +9,6 @@ export const plugin = new PanelPlugin<Attitude3DOptions>(Attitude3DPanel)
   .setMigrationHandler((panel) => migrateOptions(panel.options))
   .setPanelOptions((builder) => {
     return builder
-      // Objects
-      .addCustomEditor({
-        category: ['Objects'],
-        id: 'objects',
-        path: 'objects',
-        name: '',
-        description: 'Add and configure the 3D models in the scene',
-        editor: ObjectsEditor,
-        defaultValue: [],
-      })
       // Camera
       .addCustomEditor({
         category: ['Camera'],
@@ -185,5 +175,15 @@ export const plugin = new PanelPlugin<Attitude3DOptions>(Attitude3DPanel)
         name: 'Background Color',
         description: 'Background color for the panel',
         defaultValue: '#000000',
+      })
+      // Objects — last, since the per-object detail editor is the tallest section
+      .addCustomEditor({
+        category: ['Objects'],
+        id: 'objects',
+        path: 'objects',
+        name: '',
+        description: 'Add and configure the 3D models in the scene',
+        editor: ObjectsEditor,
+        defaultValue: [],
       })
   })

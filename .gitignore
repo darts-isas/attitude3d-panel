@@ -37,6 +37,9 @@ dartsisas-attitude3d-panel.tar.gz
 # Editor
 .idea
 
+# OS
+.DS_Store
+
 .eslintcache
 
 # input_to_aa

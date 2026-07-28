@@ -4,35 +4,6 @@ Panel for rendering 3D objects
 
 ## Panel Setting
 
-### Objects
-
-* Add Model
-  * Add a new 3D model to the scene. Each added model gets its own set of settings below (master/detail: pick a model on the left to edit its settings on the right)
-  * Name
-    * Display name for the model, shown in the object list and used as a Camera Target option
-  * Model URL
-    * glb, gltf or obj file for the model
-    * You can use variables in this field
-    * Note: The server providing the model must respond to the Preflight Request
-  * Center
-    * Origin: Use the origin of the model
-    * Sphere: Use the center of the bounding sphere
-    * Average: Use the average of vertices
-  * Scale
-    * Scale factor applied to the model
-  * Position X, Y, Z
-    * Position of the model
-  * Quaternion X, Y, Z, W
-    * Quaternion for the model
-  * Interpolation
-    * See [Quaternion Interpolation](#quaternion-interpolation) below
-
-  Position X/Y/Z and Quaternion X/Y/Z/W each have their own source:
-  * Const: Use a constant value
-  * Field: Use the value from a query field. The field can be specified either as `Series.Field`
-    (e.g. `A.q_x`) or as a bare field name (e.g. `q_x`). If more than one query returns a field
-    with the same name, use the `Series.Field` form to disambiguate which query's field is used
-
 ### Camera
 
 * Target
@@ -76,6 +47,35 @@ Panel for rendering 3D objects
 * Background Color
   * Color of the background
 
+### Objects
+
+* Add Model
+  * Add a new 3D model to the scene. Each added model gets its own set of settings below (master/detail: pick a model on the left to edit its settings on the right)
+  * Name
+    * Display name for the model, shown in the object list and used as a Camera Target option
+  * Model URL
+    * glb, gltf or obj file for the model
+    * You can use variables in this field
+    * Note: The server providing the model must respond to the Preflight Request
+  * Center
+    * Origin: Use the origin of the model
+    * Sphere: Use the center of the bounding sphere
+    * Average: Use the average of vertices
+  * Scale
+    * Scale factor applied to the model
+  * Position X, Y, Z
+    * Position of the model
+  * Quaternion X, Y, Z, W
+    * Quaternion for the model
+  * Interpolation
+    * See [Quaternion Interpolation](#quaternion-interpolation) below
+
+  Position X/Y/Z and Quaternion X/Y/Z/W each have their own source:
+  * Const: Use a constant value
+  * Field: Use the value from a query field. The field can be specified either as `Series.Field`
+    (e.g. `A.q_x`) or as a bare field name (e.g. `q_x`). If more than one query returns a field
+    with the same name, use the `Series.Field` form to disambiguate which query's field is used
+
 ## Quaternion Interpolation
 
 This is configured per object, under the object's own Interpolation settings in Objects.
@@ -97,6 +97,28 @@ This is configured per object, under the object's own Interpolation settings in 
 * Max Extrapolation [ms]
   * Stop extrapolating once the target time exceeds the newest sample by this much. 0 disables
     extrapolation (interpolation only). Default: 5000
+
+### How it works
+
+On each refresh, the panel finds the frame carrying all four quaternion fields, takes its last
+`Retained Samples` rows, pairs each with the time value, normalizes the quaternions and keeps
+them sorted by time. Nothing older is retained, so memory use is fixed.
+
+On each animation frame:
+
+1. The target time is the end of the display range (`${__to}`). For a relative range (one
+   starting with `now`), it also advances by the wall-clock time elapsed since the data
+   arrived, so it keeps tracking "now" between refreshes
+2. The target is clamped to `newest sample time + Max Extrapolation [ms]`
+3. If the clamped target is at or past the newest sample (the usual case) the last two samples
+   are used; otherwise the pair bracketing the target is used
+4. With `u = (target - a.t) / (b.t - a.t)`, the result is `slerp(a, b, u)`. three.js implements
+   slerp with the great-circle formula, so `u > 1` continues along the same great circle at the
+   same angular velocity and stays a unit quaternion
+
+With the default `Retained Samples` of 2 this is exactly constant-angular-velocity extrapolation
+from the two newest attitudes. A buffer with a single sample applies that attitude as-is, and a
+pair less than 1 ms apart applies the newer one instead of dividing by a near-zero interval.
 
 ## Migration
 
