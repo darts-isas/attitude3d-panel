@@ -1,14 +1,16 @@
 import React, { useEffect, useRef, useState } from 'react'
-import { DataFrame, LoadingState, PanelProps } from '@grafana/data'
-import { Attitude3DOptions } from 'types'
+import { LoadingState, PanelProps } from '@grafana/data'
+import { Attitude3DOptions, DataField, ModelObject, ORIGIN_TARGET_ID } from 'types'
 import { css, cx } from '@emotion/css'
 import { useStyles2, /*useTheme2*/ } from '@grafana/ui'
-import { getTemplateSrv, PanelDataErrorView } from '@grafana/runtime'
+import { getTemplateSrv } from '@grafana/runtime'
 import * as THREE from 'three'
 import { OrbitControls } from 'three-stdlib'
 import { GLTFLoader } from 'three/examples/jsm/loaders/GLTFLoader'
 import { OBJLoader } from 'three/examples/jsm/loaders/OBJLoader'
 import { collectQuatSamples, sampleQuaternionAt, QuatSample } from './quaternionInterp'
+import { getDataFieldValue } from './dataFields'
+import { disposeObject3D, removeAndDispose } from './threeDispose'
 
 interface Props extends PanelProps<Attitude3DOptions> {}
 
@@ -30,17 +32,6 @@ const getStyles = () => {
       padding: 10px;
     `,
   }
-}
-
-const getFieldValue = (frames: DataFrame[], fieldName: string) => {
-  for (const frame of frames) {
-    for (const field of frame.fields) {
-      if (field.name === fieldName) {
-        return field.values[field.values.length - 1]
-      }
-    }
-  }
-  return 0
 }
 
 const ColorTable: {[key: string]: string} = {
@@ -121,14 +112,52 @@ const parseColor = (color: string): {color: THREE.Color, transparency: boolean} 
   if (ColorTable[color]) {
     return {color: new THREE.Color(ColorTable[color]), transparency: false}
   }
-  
+
   console.error('unknown color format:', color)
   return {color: new THREE.Color(color), transparency: false}
 }
 
-export const Attitude3DPanel: React.FC<Props> = ({ options, data, width, height, fieldConfig, id }) => {
-  const initialized = useRef<boolean>(false)
+const ZERO_VEC = new THREE.Vector3(0, 0, 0)
 
+type ObjectEntry = {
+  id: string
+  root: THREE.Group
+  model: THREE.Object3D | null
+  average: THREE.Vector3 | null       // vertex average, in the model's own local space
+  sphereCenter: THREE.Vector3 | null  // bounding sphere center, in the model's own local space
+  baseRadius: number                  // bounding sphere radius before scale is applied
+  scale: number
+  uri: string                         // resolved URI currently loaded
+  modelCenter: 'origin' | 'sphere' | 'average'
+  loadToken: number
+  quatBuffer: QuatSample[]
+  quatBufferKey: string
+}
+
+const effRadius = (e: ObjectEntry) => Math.max(e.baseRadius * e.scale, 1e-7)
+
+// Interpolation needs the four rotation slots to all be data fields; a mix with a const slot
+// has no time series to sample against. When it isn't active the static quaternion path
+// drives the object instead, so this predicate has to gate both sides or the object would be
+// left at identity.
+const isInterpActive = (o: ModelObject): boolean =>
+  o.interpEnabled === true &&
+  o.quatX?.sourceType === 'field' && o.quatY?.sourceType === 'field' &&
+  o.quatZ?.sourceType === 'field' && o.quatW?.sourceType === 'field'
+
+// Radius of a sphere centered at the origin that contains every object's root position
+// plus its own effective radius. Used for the AxesHelper size and as the camera's
+// fallback framing radius when the target is the origin (or a deleted object).
+const encompassingRadius = (entries: Map<string, ObjectEntry>): number => {
+  let max = 0
+  entries.forEach(entry => {
+    const r = entry.root.position.length() + effRadius(entry)
+    if (r > max) { max = r }
+  })
+  return entries.size === 0 ? 1 : max
+}
+
+export const Attitude3DPanel: React.FC<Props> = ({ options, data, width, height }) => {
   // const theme = useTheme2();
   const styles = useStyles2(getStyles);
 
@@ -139,29 +168,31 @@ export const Attitude3DPanel: React.FC<Props> = ({ options, data, width, height,
   const camera = useRef<THREE.PerspectiveCamera | null>(null)
   const renderer = useRef<THREE.WebGLRenderer | null>(null)
   const controls = useRef<OrbitControls | null>(null)
-
-  const model = useRef<THREE.Group | null>(null)
-  const average = useRef<THREE.Vector3 | null>(null)
-  const radius = useRef<number>(0.0000001)
-
-  const pivot = useRef<THREE.Group | null>(null)
+  const rafId = useRef<number>(0)
 
   const directionalLight = useRef<THREE.DirectionalLight | null>(null)
   const ambientLight = useRef<THREE.AmbientLight | null>(null)
 
   const axesHelper = useRef<THREE.AxesHelper | null>(null)
 
-  // Quaternion Interpolation
-  const quatBuffer = useRef<QuatSample[]>([])
-  const quatBufferKey = useRef<string>('')
+  const [sceneVersion, setSceneVersion] = useState(0)
+
+  // Object registry, keyed by ModelObject.id.
+  const objectsRef = useRef<Map<string, ObjectEntry>>(new Map())
+
+  // Per-object interpolation config and the camera-target id, refreshed every render so
+  // the rAF loop (a closure created once in initRenderer) always sees the latest values.
+  const objectCfgRef = useRef<Map<string, { interpEnabled: boolean; interpMaxExtrapMs: number }>>(new Map())
+  const cameraTargetIdRef = useRef<string>(ORIGIN_TARGET_ID)
+
   const lastData = useRef<unknown>(null)
   const dataArrivedAt = useRef<number>(Date.now())
   const extrapState = useRef<{
-    enabled: boolean
     timeRangeToMs: number
     followNow: boolean
-    maxExtrapMs: number
   } | null>(null)
+
+  const lastTargetPos = useRef(new THREE.Vector3())
 
   // Stamp the arrival time during render, not in an effect: extrapState below is assigned
   // during render too, so an effect-set stamp would pair a fresh timeRangeToMs with the
@@ -174,132 +205,243 @@ export const Attitude3DPanel: React.FC<Props> = ({ options, data, width, height,
   // Template
   const tmplSrv = getTemplateSrv()
 
-  const [modelURI, setModelURI] = useState(options.modelURI)
-  const replacedModelURI = tmplSrv.replace(options.modelURI)
-  if (replacedModelURI !== modelURI) {
-    setModelURI(replacedModelURI)
+  const evalDataField = (df: DataField | undefined, fallback: number): number => {
+    if (!df || df.sourceType === 'const') {
+      const v = parseFloat(tmplSrv.replace(String(df?.value ?? '')))
+      return Number.isFinite(v) ? v : fallback
+    }
+    return getDataFieldValue(data.series, df, fallback)
   }
 
   // Params
-  const modelRotationX = options.modelRotationType === 'field' ? getFieldValue(data.series, options.modelRotationX) : parseInt(tmplSrv.replace(options.modelRotationX +''), 10) || 0
-  const modelRotationY = options.modelRotationType === 'field' ? getFieldValue(data.series, options.modelRotationY) : parseInt(tmplSrv.replace(options.modelRotationY + ''), 10) || 0
-  const modelRotationZ = options.modelRotationType === 'field' ? getFieldValue(data.series, options.modelRotationZ) : parseInt(tmplSrv.replace(options.modelRotationZ + ''), 10) || 0
-  const modelRotationW = options.modelRotationType === 'field' ? getFieldValue(data.series, options.modelRotationW) : parseInt(tmplSrv.replace(options.modelRotationW + ''), 10) || 0
+  const cameraDirectionX = options.cameraDirectionType === 'field' ? getDataFieldValue(data.series, { sourceType: 'field', value: options.cameraDirectionX }, 0) : parseFloat(tmplSrv.replace(options.cameraDirectionX + '')) || 0
+  const cameraDirectionY = options.cameraDirectionType === 'field' ? getDataFieldValue(data.series, { sourceType: 'field', value: options.cameraDirectionY }, 0) : parseFloat(tmplSrv.replace(options.cameraDirectionY + '')) || 0
+  const cameraDirectionZ = options.cameraDirectionType === 'field' ? getDataFieldValue(data.series, { sourceType: 'field', value: options.cameraDirectionZ }, 0) : parseFloat(tmplSrv.replace(options.cameraDirectionZ + '')) || 0
 
-  // Quaternion Interpolation
-  const quatInterpEnabled = options.quatInterpEnabled === true && options.modelRotationType === 'field'
-  const bufferSize = Math.max(2, Math.floor(Number(options.quatInterpBufferSize) || 2))
-  const maxExtrapMs = Number.isFinite(Number(options.quatInterpMaxExtrapMs)) ? Math.max(0, Number(options.quatInterpMaxExtrapMs)) : 0
+  const directionalLightDirectionX = options.directionalLightDirectionType === 'field' ? getDataFieldValue(data.series, { sourceType: 'field', value: options.directionalLightDirectionX }, 0) : parseFloat(tmplSrv.replace(options.directionalLightDirectionX + '')) || 0
+  const directionalLightDirectionY = options.directionalLightDirectionType === 'field' ? getDataFieldValue(data.series, { sourceType: 'field', value: options.directionalLightDirectionY }, 0) : parseFloat(tmplSrv.replace(options.directionalLightDirectionY + '')) || 0
+  const directionalLightDirectionZ = options.directionalLightDirectionType === 'field' ? getDataFieldValue(data.series, { sourceType: 'field', value: options.directionalLightDirectionZ }, 0) : parseFloat(tmplSrv.replace(options.directionalLightDirectionZ + '')) || 0
 
-  const cameraDirectionX = options.cameraDirectionType === 'field' ? getFieldValue(data.series, options.cameraDirectionX) : parseInt(tmplSrv.replace(options.cameraDirectionX + ''), 10) || 0
-  const cameraDirectionY = options.cameraDirectionType === 'field' ? getFieldValue(data.series, options.cameraDirectionY) : parseInt(tmplSrv.replace(options.cameraDirectionY + ''), 10) || 0
-  const cameraDirectionZ = options.cameraDirectionType === 'field' ? getFieldValue(data.series, options.cameraDirectionZ) : parseInt(tmplSrv.replace(options.cameraDirectionZ + ''), 10) || 0
+  cameraTargetIdRef.current = options.cameraTargetId ?? ORIGIN_TARGET_ID
 
-  const directionalLightDirectionX = options.directionalLightDirectionType === 'field' ? getFieldValue(data.series, options.directionalLightDirectionX) : parseInt(tmplSrv.replace(options.directionalLightDirectionX + ''), 10) || 0
-  const directionalLightDirectionY = options.directionalLightDirectionType === 'field' ? getFieldValue(data.series, options.directionalLightDirectionY) : parseInt(tmplSrv.replace(options.directionalLightDirectionY + ''), 10) || 0
-  const directionalLightDirectionZ = options.directionalLightDirectionType === 'field' ? getFieldValue(data.series, options.directionalLightDirectionZ) : parseInt(tmplSrv.replace(options.directionalLightDirectionZ + ''), 10) || 0
+  const objectList = Array.isArray(options.objects) ? options.objects : []
+  const resolvedObjects = objectList.map(o => ({ ...o, resolvedURI: tmplSrv.replace(o.modelURI ?? '') }))
+  const sceneHash = JSON.stringify(
+    resolvedObjects.filter(o => o.visible !== false)
+      .map(o => [o.id, o.resolvedURI, o.modelCenter, o.scale])
+  )
 
-  // Quaternion Interpolation - collect samples into the buffer
-  useEffect(() => {
-    if (!quatInterpEnabled) {
-      quatBuffer.current = []
-      quatBufferKey.current = ''
-      return
-    }
+  const interpHash = JSON.stringify(
+    objectList.map(o => [
+      o.id, o.interpEnabled, o.interpTimeField, o.interpBufferSize,
+      o.quatX?.sourceType, o.quatX?.value,
+      o.quatY?.sourceType, o.quatY?.value,
+      o.quatZ?.sourceType, o.quatZ?.value,
+      o.quatW?.sourceType, o.quatW?.value,
+    ])
+  )
 
-    if (data.state === LoadingState.Error) { return }
+  // Refresh the per-object interpolation config and the shared extrapolation state every
+  // render so the rAF loop (a closure created once in initRenderer) always sees the latest
+  // values via refs.
+  objectCfgRef.current.clear()
+  objectList.forEach(o => {
+    objectCfgRef.current.set(o.id, {
+      interpEnabled: isInterpActive(o),
+      interpMaxExtrapMs: Number.isFinite(Number(o.interpMaxExtrapMs)) ? Math.max(0, Number(o.interpMaxExtrapMs)) : 0,
+    })
+  })
 
-    const key = [
-      options.modelRotationX,
-      options.modelRotationY,
-      options.modelRotationZ,
-      options.modelRotationW,
-      options.quatInterpTimeField,
-    ].join('|')
-    if (key !== quatBufferKey.current) {
-      quatBuffer.current = []
-      quatBufferKey.current = key
-    }
-
-    const incoming = collectQuatSamples(
-      data.series,
-      { x: options.modelRotationX, y: options.modelRotationY, z: options.modelRotationZ, w: options.modelRotationW },
-      options.quatInterpTimeField ?? '',
-      bufferSize,
-      dataArrivedAt.current,
-    )
-    if (incoming.length === 0) { return }
-
-    const buffer = quatBuffer.current
-    if (buffer.length !== 0 && incoming[incoming.length - 1].t < buffer[buffer.length - 1].t) {
-      // Time range moved/zoomed into the past: discard the stale buffer and adopt incoming as-is.
-      quatBuffer.current = [...incoming]
-    }
-    else {
-      const lastT = buffer.length !== 0 ? buffer[buffer.length - 1].t : -Infinity
-      const toAppend = incoming.filter(sample => sample.t > lastT)
-      if (toAppend.length !== 0) {
-        quatBuffer.current = [...buffer, ...toAppend]
-      }
-    }
-
-    if (quatBuffer.current.length > bufferSize) {
-      quatBuffer.current.splice(0, quatBuffer.current.length - bufferSize)
-    }
-  }, [
-    data, quatInterpEnabled,
-    options.modelRotationX, options.modelRotationY, options.modelRotationZ, options.modelRotationW,
-    options.quatInterpTimeField, bufferSize,
-  ])
-
-  // Quaternion Interpolation - refresh extrapolation state every render so the rAF loop
-  // (a closure created once in initRenderer) always sees the latest values via refs.
   // Only a relative 'now...' range keeps advancing in real time. An absolute range may also
   // arrive as an ISO string, so testing for a string alone would wrongly follow the clock.
   const rawTo = data.timeRange?.raw?.to
   const followNow = typeof rawTo === 'string' && rawTo.startsWith('now')
   extrapState.current = {
-    enabled: quatInterpEnabled,
     timeRangeToMs: data.timeRange ? data.timeRange.to.valueOf() : 0,
     followNow,
-    maxExtrapMs,
   }
 
-  // Applies the extrapolated/interpolated quaternion to the pivot. Reads only refs (no
-  // closed-over state), so calling it from the tick loop's stale closure is still correct.
-  const applyExtrapolatedRotation = () => {
+  // Applies the interpolated/extrapolated quaternion to every object with interpolation
+  // enabled. Reads only refs (no closed-over state), so calling it from the tick loop's
+  // stale closure is still correct.
+  const applyInterpolatedRotations = () => {
     const st = extrapState.current
-    if (!st || !st.enabled) { return }
-    if (!pivot.current) { return }
+    if (!st) { return }
 
     const target = st.followNow
       ? st.timeRangeToMs + (Date.now() - dataArrivedAt.current)
       : st.timeRangeToMs
 
-    const q = sampleQuaternionAt(quatBuffer.current, target, st.maxExtrapMs)
-    if (!q) { return }
-    pivot.current.quaternion.copy(q)
+    objectsRef.current.forEach((entry, id) => {
+      const cfg = objectCfgRef.current.get(id)
+      if (!cfg || !cfg.interpEnabled) { return }
+
+      const q = sampleQuaternionAt(entry.quatBuffer, target, cfg.interpMaxExtrapMs)
+      if (q) { entry.root.quaternion.copy(q) }
+    })
+  }
+
+  // Keeps the camera's position/orientation relative to the current camera target as the
+  // target moves, by translating the camera by the target's delta rather than recomputing
+  // an absolute position (which would fight with mouse control / OrbitControls).
+  const followCameraTarget = () => {
+    if (!camera.current) { return }
+
+    const entry = objectsRef.current.get(cameraTargetIdRef.current)
+    const center = entry ? entry.root.position : ZERO_VEC
+    const delta = center.clone().sub(lastTargetPos.current)
+    if (delta.lengthSq() === 0) { return }
+
+    camera.current.position.add(delta)
+    lastTargetPos.current.copy(center)
+    if (controls.current) { controls.current.target.copy(center) }
+    else { camera.current.lookAt(center) }
+  }
+
+  const applyCenter = (entry: ObjectEntry) => {
+    const model = entry.model
+    if (!model) { return }
+
+    // Both offsets are measured once at load time in the model's own local space. Recomputing
+    // the bounding box here would be wrong twice over: Box3.setFromObject works in world
+    // space (so it would pick up root's position/rotation/scale), and the model already
+    // carries the previous centering offset, which would be applied a second time.
+    switch (entry.modelCenter) {
+      case 'sphere': {
+        const c = entry.sphereCenter ?? ZERO_VEC
+        model.position.set(-c.x, -c.y, -c.z)
+        break
+      }
+      case 'average': {
+        const avg = entry.average ?? ZERO_VEC
+        model.position.set(-avg.x, -avg.y, -avg.z)
+        break
+      }
+      default:
+        model.position.set(0, 0, 0)
+        break
+    }
+  }
+
+  // Measures the model in its own local space. Must be called while obj is still detached
+  // from the scene graph, so child.matrixWorld is relative to obj itself.
+  const measureModel = (obj: THREE.Object3D): { average: THREE.Vector3, sphereCenter: THREE.Vector3, baseRadius: number } => {
+    obj.position.set(0, 0, 0)
+    obj.updateMatrixWorld(true)
+
+    const sum = new THREE.Vector3(0, 0, 0)
+    let total = 0
+
+    obj.traverse(child => {
+      if (!(child instanceof THREE.Mesh)) { return }
+      const posAttr = child.geometry.attributes.position
+      if (!posAttr) { return }
+
+      const v = new THREE.Vector3()
+      for (let i = 0; i < posAttr.count; i++) {
+        v.set(posAttr.getX(i), posAttr.getY(i), posAttr.getZ(i))
+        v.applyMatrix4(child.matrixWorld)
+        sum.add(v)
+        total++
+      }
+    })
+
+    const average = total > 0 ? sum.divideScalar(total) : new THREE.Vector3(0, 0, 0)
+
+    const sphere = new THREE.Sphere()
+    new THREE.Box3().setFromObject(obj).getBoundingSphere(sphere)
+    const baseRadius = Number.isFinite(sphere.radius) && sphere.radius > 0 ? sphere.radius : 1e-7
+
+    return { average, sphereCenter: sphere.center.clone(), baseRadius }
+  }
+
+  const setupModel = (entry: ObjectEntry, obj: THREE.Object3D) => {
+    if (entry.model) {
+      removeAndDispose(entry.model)
+      entry.model = null
+    }
+
+    const { average, sphereCenter, baseRadius } = measureModel(obj)
+    entry.average = average
+    entry.sphereCenter = sphereCenter
+    entry.baseRadius = baseRadius
+    entry.model = obj
+
+    applyCenter(entry)
+
+    entry.root.add(obj)
+  }
+
+  const setupDefaultModel = (entry: ObjectEntry) => {
+    if (entry.model) {
+      removeAndDispose(entry.model)
+      entry.model = null
+    }
+
+    const group = new THREE.Group()
+    group.add(new THREE.Mesh(
+      new THREE.BoxGeometry(1, 1, 1),
+      new THREE.MeshLambertMaterial({ color: 0xffffff }),
+    ))
+
+    const { average, sphereCenter, baseRadius } = measureModel(group)
+    entry.average = average
+    entry.sphereCenter = sphereCenter
+    entry.baseRadius = baseRadius
+    entry.model = group
+
+    applyCenter(entry)
+
+    entry.root.add(group)
+  }
+
+  const loadModelFor = (entry: ObjectEntry, uri: string) => {
+    const token = ++entry.loadToken
+    entry.uri = uri
+
+    const accept = (obj: THREE.Object3D) => {
+      // Drop the result if this object was deleted, or a newer load overtook this one.
+      if (entry.loadToken !== token || objectsRef.current.get(entry.id) !== entry) {
+        disposeObject3D(obj)
+        return
+      }
+      setupModel(entry, obj)
+      setSceneVersion(v => v + 1)
+    }
+    const fallback = () => {
+      if (entry.loadToken !== token) { return }
+      setupDefaultModel(entry)
+      setSceneVersion(v => v + 1)
+    }
+
+    if (uri && uri.match(/\.(?:glb|gltf)$/)) {
+      const loader = new GLTFLoader()
+      loader.load(uri, gltf => accept(gltf.scene), (_progress) => {}, (err) => {
+        console.error(err)
+        fallback()
+      })
+    }
+    else if (uri && uri.match(/\.(?:obj)$/)) {
+      const loader = new OBJLoader()
+      loader.load(uri, obj => accept(obj), (_progress) => {}, (err) => {
+        console.error(err)
+        fallback()
+      })
+    }
+    else {
+      // default model
+      fallback()
+    }
   }
 
   // Initialize Renderer
   const initRenderer = () => {
-    if (!canvas.current) {
-      // setTimeout(initRenderer, 500)
-      return
-    }
+    if (!canvas.current) { return }
 
     scene.current = new THREE.Scene()
 
     camera.current = new THREE.PerspectiveCamera(75, size.current.width / size.current.height, 0.1, 1000)
-
-    const vec = new THREE.Vector3(
-      - cameraDirectionX,
-      - cameraDirectionY,
-      - cameraDirectionZ,
-    )
-    vec.normalize()
-    vec.multiplyScalar(radius.current * parseFloat(options.cameraDistance))
-    camera.current.position.set(vec.x, vec.y, vec.z)
+    camera.current.position.set(0, 0, 2)
     camera.current.lookAt(0, 0, 0)
 
     renderer.current = new THREE.WebGLRenderer({
@@ -309,10 +451,6 @@ export const Attitude3DPanel: React.FC<Props> = ({ options, data, width, height,
     })
     renderer.current.setSize(size.current.width, size.current.height)
     renderer.current.setPixelRatio(Math.min(window.devicePixelRatio, 2))
-
-    pivot.current = new THREE.Group()
-    pivot.current.position.set(0, 0, 0)
-    scene.current.add(pivot.current)
 
     // Initial Light Settings
     directionalLight.current = new THREE.DirectionalLight(parseColor(options.directionalLightColor).color)
@@ -329,25 +467,54 @@ export const Attitude3DPanel: React.FC<Props> = ({ options, data, width, height,
     scene.current.add(ambientLight.current)
 
     const tick = () => {
-      requestAnimationFrame(tick)
+      rafId.current = requestAnimationFrame(tick)
 
       if (!scene.current || !camera.current || !renderer.current) { return }
 
       // Reads only refs, so it stays correct even though tick is a closure created once.
-      applyExtrapolatedRotation()
+      applyInterpolatedRotations()
+      followCameraTarget()
 
       renderer.current.render(scene.current, camera.current)
-      
+
       if (!controls.current) { return }
       controls.current.update()
     }
     tick()
   }
-  
+
 	useEffect(() => {
-    if (initialized.current) { return }
     initRenderer()
-    initialized.current = true
+
+    // Captured once: objectsRef.current is the same Map instance for the component's
+    // whole lifetime (only ever mutated in place), so this is safe to use in cleanup.
+    const objects = objectsRef.current
+
+    return () => {
+      cancelAnimationFrame(rafId.current)
+
+      objects.forEach(entry => {
+        scene.current?.remove(entry.root)
+        disposeObject3D(entry.root)
+      })
+      objects.clear()
+
+      if (axesHelper.current) {
+        axesHelper.current.dispose()
+        axesHelper.current = null
+      }
+
+      controls.current?.dispose()
+      controls.current = null
+
+      renderer.current?.dispose()
+      renderer.current = null
+
+      scene.current = null
+      camera.current = null
+      directionalLight.current = null
+      ambientLight.current = null
+    }
   }, []) // eslint-disable-line react-hooks/exhaustive-deps
 
   // Panel Size
@@ -378,200 +545,194 @@ export const Attitude3DPanel: React.FC<Props> = ({ options, data, width, height,
     }
   }, [options.backgroundColor])
 
-  // Model
+  // Scene sync: create/destroy/reload ObjectEntry instances to match options.objects.
   useEffect(() => {
-    if (!pivot.current) { return }
-    
-    if (model.current) {
-      pivot.current.remove(model.current)
-      model.current = null
-    }
-    
-    const setupDefaultModel = () => {
-      model.current = new THREE.Group()
-      model.current.add(new THREE.Mesh(
-        new THREE.BoxGeometry(1, 1, 1),
-        // new THREE.MeshNormalMaterial(),
-        new THREE.MeshLambertMaterial({ color: 0xffffff }),
-      ))
+    if (!scene.current) { return }
 
-      model.current.position.set(0, 0, 0)
-      
-      const sphere = new THREE.Sphere()
-      const box = new THREE.Box3().setFromObject(model.current)
-      box.getBoundingSphere(sphere)
-      radius.current = sphere.radius
+    const visibleObjects = objectList.filter(o => o.visible !== false)
+    const wantedIds = new Set(visibleObjects.map(o => o.id))
+    let changed = false
 
-      if (!pivot.current) { return }
-      pivot.current.add(model.current)
+    // Discard entries no longer wanted.
+    objectsRef.current.forEach((entry, id) => {
+      if (wantedIds.has(id)) { return }
 
-      if (!camera.current) {
-        console.error('No camera')
+      entry.loadToken++
+      scene.current?.remove(entry.root)
+      disposeObject3D(entry.root)
+      objectsRef.current.delete(id)
+      changed = true
+    })
+
+    visibleObjects.forEach(o => {
+      const resolvedURI = tmplSrv.replace(o.modelURI ?? '')
+      let entry = objectsRef.current.get(o.id)
+
+      if (!entry) {
+        const root = new THREE.Group()
+        scene.current?.add(root)
+
+        entry = {
+          id: o.id,
+          root,
+          model: null,
+          average: null,
+          sphereCenter: null,
+          baseRadius: 1e-7,
+          scale: o.scale,
+          uri: '',
+          modelCenter: o.modelCenter,
+          loadToken: 0,
+          quatBuffer: [],
+          quatBufferKey: '',
+        }
+        root.scale.setScalar(o.scale)
+        objectsRef.current.set(o.id, entry)
+        loadModelFor(entry, resolvedURI)
+        changed = true
         return
       }
-      const vec = new THREE.Vector3(
-        - cameraDirectionX,
-        - cameraDirectionY,
-        - cameraDirectionZ,
-      )
-      vec.normalize()
-      vec.multiplyScalar(radius.current * parseFloat(options.cameraDistance))
-      camera.current.position.set(vec.x, vec.y, vec.z)
-      camera.current.lookAt(0, 0, 0)
 
-      if (!controls.current) { return }
-      controls.current.target.set(0, 0, 0)
-      controls.current.maxDistance = radius.current * 3.0
-      controls.current.minDistance = radius.current * 0.1
-      controls.current.update()
-    }
-
-    const setupModel = (m: THREE.Group<THREE.Object3DEventMap>) => {
-      model.current = m
-
-      average.current = new THREE.Vector3(0,0,0)
-      let count = 0
-
-      model.current.traverse(child => {
-        if (child instanceof THREE.Mesh && average.current) {
-          count += child.geometry.attributes.position.count
-          for (let i = 0; i < count; i++) {
-            average.current.x += child.geometry.attributes.position.array[i * 3 + 0] || 0
-            average.current.y += child.geometry.attributes.position.array[i * 3 + 1] || 0
-            average.current.z += child.geometry.attributes.position.array[i * 3 + 2] || 0
-          }
+      if (resolvedURI !== entry.uri) {
+        if (entry.model) {
+          removeAndDispose(entry.model)
+          entry.model = null
         }
-      })
-
-      average.current.x /= count
-      average.current.y /= count
-      average.current.z /= count
-
-      const sphere = new THREE.Sphere()
-      const box = new THREE.Box3().setFromObject(model.current)
-      box.getBoundingSphere(sphere)
-      radius.current = sphere.radius
-
-      switch (options.modelCenter) {
-        case 'sphere':
-          const sphere = new THREE.Sphere()
-          const box = new THREE.Box3().setFromObject(model.current)
-          box.getBoundingSphere(sphere)
-          model.current.position.set(-sphere.center.x, -sphere.center.y, -sphere.center.z)
-          break
-        case 'average':
-          model.current.position.set(-average.current.x, -average.current.y, -average.current.z)
-          break
-        default:
-          model.current.position.set(0, 0, 0)
-          break
+        loadModelFor(entry, resolvedURI)
+        changed = true
       }
-      
-      if (!pivot.current) { return }
-      pivot.current.add(model.current)
 
-      if (!camera.current) { return }
-      const vec = new THREE.Vector3(
-        - cameraDirectionX,
-        - cameraDirectionY,
-        - cameraDirectionZ,
+      if (o.scale !== entry.scale) {
+        entry.scale = o.scale
+        entry.root.scale.setScalar(o.scale)
+        changed = true
+      }
+
+      if (o.modelCenter !== entry.modelCenter) {
+        entry.modelCenter = o.modelCenter
+        applyCenter(entry)
+        changed = true
+      }
+    })
+
+    if (changed) { setSceneVersion(v => v + 1) }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [sceneHash])
+
+  // Position / orientation from data.
+  useEffect(() => {
+    objectList.forEach(o => {
+      const entry = objectsRef.current.get(o.id)
+      if (!entry) { return }
+
+      entry.root.position.set(evalDataField(o.posX, 0), evalDataField(o.posY, 0), evalDataField(o.posZ, 0))
+
+      if (!isInterpActive(o)) {
+        const q = new THREE.Quaternion(
+          evalDataField(o.quatX, 0), evalDataField(o.quatY, 0),
+          evalDataField(o.quatZ, 0), evalDataField(o.quatW, 1),
+        )
+        if (q.lengthSq() > 0) {
+          q.normalize()
+          entry.root.quaternion.copy(q)
+        }
+      }
+    })
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [data, options.objects])
+
+  // Quaternion Interpolation - collect samples into each object's buffer.
+  useEffect(() => {
+    if (data.state === LoadingState.Error) { return }
+
+    objectList.forEach((o: ModelObject) => {
+      const entry = objectsRef.current.get(o.id)
+      if (!entry) { return }
+
+      if (!isInterpActive(o)) {
+        entry.quatBuffer = []
+        entry.quatBufferKey = ''
+        return
+      }
+
+      const bufferSize = Math.max(2, Math.floor(Number(o.interpBufferSize) || 2))
+
+      const key = [
+        o.quatX.value, o.quatY.value, o.quatZ.value, o.quatW.value,
+        o.interpTimeField,
+      ].join('|')
+      if (key !== entry.quatBufferKey) {
+        entry.quatBuffer = []
+        entry.quatBufferKey = key
+      }
+
+      const incoming = collectQuatSamples(
+        data.series,
+        { x: o.quatX.value, y: o.quatY.value, z: o.quatZ.value, w: o.quatW.value },
+        o.interpTimeField ?? '',
+        bufferSize,
+        dataArrivedAt.current,
       )
-      vec.normalize()
-      vec.multiplyScalar(radius.current * parseFloat(options.cameraDistance))
-      camera.current.position.set(vec.x, vec.y, vec.z)
-      camera.current.lookAt(0, 0, 0)
+      if (incoming.length === 0) { return }
 
-      if (!controls.current) { return }
-      controls.current.target.set(0, 0, 0)
-      controls.current.maxDistance = radius.current * 3.0
-      controls.current.minDistance = radius.current * 0.1
-      controls.current.update()
-    }
-
-    if (modelURI) {
-      if (modelURI.match(/\.(?:glb|gltf)$/)) {
-        const loader = new GLTFLoader()
-        loader.load(modelURI, gltf => {
-          setupModel(gltf.scene)
-        }, (_progress) => {}, (err) => {
-          console.error(err)
-          setupDefaultModel()
-        })
-      }
-      else if (modelURI.match(/\.(?:obj)$/)) {
-        const loader = new OBJLoader()
-        loader.load(modelURI, (obj) => {
-          setupModel(obj)
-        }, (_progress) => {}, (err) => {
-          console.error(err)
-          setupDefaultModel()
-        })
+      const buffer = entry.quatBuffer
+      if (buffer.length !== 0 && incoming[incoming.length - 1].t < buffer[buffer.length - 1].t) {
+        // Time range moved/zoomed into the past: discard the stale buffer and adopt incoming as-is.
+        entry.quatBuffer = [...incoming]
       }
       else {
-        // default model
-        setupDefaultModel()
+        const lastT = buffer.length !== 0 ? buffer[buffer.length - 1].t : -Infinity
+        const toAppend = incoming.filter(sample => sample.t > lastT)
+        if (toAppend.length !== 0) {
+          entry.quatBuffer = [...buffer, ...toAppend]
+        }
       }
-    }
-    else {
-      // default model
-      setupDefaultModel()
-    }
-  }, [modelURI]) // eslint-disable-line react-hooks/exhaustive-deps
 
-  // Model Rotation
-  useEffect(() => {
-    // Extrapolation mode drives pivot.quaternion from the rAF loop instead.
-    if (quatInterpEnabled) { return }
+      if (entry.quatBuffer.length > bufferSize) {
+        entry.quatBuffer.splice(0, entry.quatBuffer.length - bufferSize)
+      }
+    })
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [data, interpHash])
 
-    if (!pivot.current) { return }
-
-    const quaternion = new THREE.Quaternion(
-      modelRotationX,
-      modelRotationY,
-      modelRotationZ,
-      modelRotationW,
-    )
-    pivot.current.rotation.setFromQuaternion(quaternion)
-  }, [modelRotationX, modelRotationY, modelRotationZ, modelRotationW, quatInterpEnabled])
-
-  // Model Center
-  useEffect(() => {
-    if (!model.current) { return }
-    if (!average.current) { return }
-
-    const sphere = new THREE.Sphere()
-    model.current.position.set(0, 0, 0)
-    const box = new THREE.Box3().setFromObject(model.current)
-    box.getBoundingSphere(sphere)
-
-    switch (options.modelCenter) {
-      case 'sphere':
-        model.current.position.set(-sphere.center.x, -sphere.center.y, -sphere.center.z)
-        break
-      case 'average':
-        model.current.position.set(-average.current.x, -average.current.y, -average.current.z)
-        break
-      default:
-        model.current.position.set(0, 0, 0)
-        break
-    }
-  }, [options.modelCenter])
-
-  // Camera Direction
+  // Camera Direction / Target
   useEffect(() => {
     if (!camera.current) { return }
+
+    const targetEntry = objectsRef.current.get(options.cameraTargetId ?? ORIGIN_TARGET_ID)
+    const center = targetEntry ? targetEntry.root.position : new THREE.Vector3(0, 0, 0)
+    const baseRadius = targetEntry ? effRadius(targetEntry) : encompassingRadius(objectsRef.current)
+
+    let distance = baseRadius * parseFloat(options.cameraDistance)
+    if (!Number.isFinite(distance) || distance <= 0) {
+      distance = baseRadius * 2
+    }
 
     const vec = new THREE.Vector3(
       - cameraDirectionX,
       - cameraDirectionY,
       - cameraDirectionZ,
     )
+    if (vec.lengthSq() === 0) { vec.set(0, 0, 1) }
     vec.normalize()
-    vec.multiplyScalar(radius.current * parseFloat(options.cameraDistance))
-    camera.current.position.set(vec.x, vec.y, vec.z)
-    camera.current.lookAt(0, 0, 0)
+    vec.multiplyScalar(distance)
+
+    camera.current.position.set(center.x + vec.x, center.y + vec.y, center.z + vec.z)
+    camera.current.lookAt(center)
+    lastTargetPos.current.copy(center)
+
+    camera.current.near = Math.max(distance * 0.01, 1e-4)
+    camera.current.far = Math.max(distance * 100, 1000)
+    camera.current.updateProjectionMatrix()
+
+    if (controls.current) {
+      controls.current.target.copy(center)
+      controls.current.maxDistance = baseRadius * 3.0
+      controls.current.minDistance = baseRadius * 0.1
+      controls.current.update()
+    }
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [cameraDirectionX, cameraDirectionY, cameraDirectionZ, options.cameraDistance])
+  }, [cameraDirectionX, cameraDirectionY, cameraDirectionZ, options.cameraDistance, options.cameraTargetId, sceneVersion])
 
   // Directional Light
   useEffect(() => {
@@ -583,7 +744,7 @@ export const Attitude3DPanel: React.FC<Props> = ({ options, data, width, height,
       - directionalLightDirectionZ,
     )
 
-    directionalLight.current.color.set(options.directionalLightColor)
+    directionalLight.current.color.set(parseColor(options.directionalLightColor).color)
     directionalLight.current.position.set(vec.x, vec.y, vec.z)
 
     directionalLight.current.intensity = parseFloat(options.directionalLightIntensity)
@@ -596,7 +757,7 @@ export const Attitude3DPanel: React.FC<Props> = ({ options, data, width, height,
   useEffect(() => {
     if (!ambientLight.current) { return }
     if (options.ambientLightColor) {
-      ambientLight.current.color.set(options.ambientLightColor)
+      ambientLight.current.color.set(parseColor(options.ambientLightColor).color)
     }
     if (options.ambientLightIntensity) {
       ambientLight.current.intensity = parseFloat(options.ambientLightIntensity)
@@ -606,27 +767,36 @@ export const Attitude3DPanel: React.FC<Props> = ({ options, data, width, height,
   // Helper
   useEffect(() => {
     if (!scene.current) { return }
-    if (options.showHelper && !axesHelper.current) {
-      axesHelper.current = new THREE.AxesHelper(radius.current)
-      scene.current.add(axesHelper.current)
-    }
-    else if (!options.showHelper && axesHelper.current) {
+
+    if (axesHelper.current) {
       scene.current.remove(axesHelper.current)
+      axesHelper.current.dispose()
       axesHelper.current = null
     }
-  }, [options.showHelper])
+
+    if (options.showHelper) {
+      axesHelper.current = new THREE.AxesHelper(encompassingRadius(objectsRef.current))
+      scene.current.add(axesHelper.current)
+    }
+  }, [options.showHelper, sceneVersion])
 
   // Mouse Control
   useEffect(() => {
     if (!camera.current || !renderer.current) { return }
+
+    const targetEntry = objectsRef.current.get(cameraTargetIdRef.current)
+    const center = targetEntry ? targetEntry.root.position : new THREE.Vector3(0, 0, 0)
+    const baseRadius = targetEntry ? effRadius(targetEntry) : encompassingRadius(objectsRef.current)
+
     if (options.mouseControl) {
       if (controls.current) { return }
       controls.current = new OrbitControls(camera.current, renderer.current.domElement)
       controls.current.enableZoom = true
       controls.current.enableDamping = true
       controls.current.dampingFactor = 0.1
-      controls.current.maxDistance = radius.current * 3.0
-      controls.current.minDistance = radius.current * 0.1
+      controls.current.target.copy(center)
+      controls.current.maxDistance = baseRadius * 3.0
+      controls.current.minDistance = baseRadius * 0.1
       controls.current.mouseButtons = {
         LEFT  : THREE.MOUSE.ROTATE,
         MIDDLE: THREE.MOUSE.DOLLY,
@@ -638,22 +808,25 @@ export const Attitude3DPanel: React.FC<Props> = ({ options, data, width, height,
       controls.current.dispose()
       controls.current = null
 
+      let distance = baseRadius * parseFloat(options.cameraDistance)
+      if (!Number.isFinite(distance) || distance <= 0) {
+        distance = baseRadius * 2
+      }
+
       const vec = new THREE.Vector3(
         - cameraDirectionX,
         - cameraDirectionY,
         - cameraDirectionZ,
       )
+      if (vec.lengthSq() === 0) { vec.set(0, 0, 1) }
       vec.normalize()
-      vec.multiplyScalar(radius.current * parseFloat(options.cameraDistance))
-      camera.current.position.set(vec.x, vec.y, vec.z)
-      camera.current.lookAt(0, 0, 0)
+      vec.multiplyScalar(distance)
+      camera.current.position.set(center.x + vec.x, center.y + vec.y, center.z + vec.z)
+      camera.current.lookAt(center)
+      lastTargetPos.current.copy(center)
     }
   }, [options.mouseControl]) // eslint-disable-line react-hooks/exhaustive-deps
 
-  if (data.series.length === 0) {
-    return (<PanelDataErrorView fieldConfig={fieldConfig} panelId={id} data={data} needsStringField />)
-  }
-  
   return (
     <div
       className={cx(

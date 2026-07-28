@@ -1,5 +1,6 @@
 import * as THREE from 'three'
 import { DataFrame, FieldType } from '@grafana/data'
+import { resolveFieldInFrame } from './dataFields'
 
 export type QuatSample = { t: number; q: THREE.Quaternion }
 
@@ -56,22 +57,23 @@ export const collectQuatSamples = (
   maxRows: number,
   fallbackTimeMs: number,
 ): QuatSample[] => {
-  const frame = frames.find(f => {
-    const hasX = f.fields.some(field => field.name === names.x)
-    const hasY = f.fields.some(field => field.name === names.y)
-    const hasZ = f.fields.some(field => field.name === names.z)
-    const hasW = f.fields.some(field => field.name === names.w)
+  const index = frames.findIndex((f, i) => {
+    const hasX = !!resolveFieldInFrame(f, names.x, i)
+    const hasY = !!resolveFieldInFrame(f, names.y, i)
+    const hasZ = !!resolveFieldInFrame(f, names.z, i)
+    const hasW = !!resolveFieldInFrame(f, names.w, i)
     return hasX && hasY && hasZ && hasW
   })
-  if (!frame) { return [] }
+  if (index < 0) { return [] }
+  const frame = frames[index]
 
-  const xField = frame.fields.find(field => field.name === names.x)
-  const yField = frame.fields.find(field => field.name === names.y)
-  const zField = frame.fields.find(field => field.name === names.z)
-  const wField = frame.fields.find(field => field.name === names.w)
+  const xField = resolveFieldInFrame(frame, names.x, index)
+  const yField = resolveFieldInFrame(frame, names.y, index)
+  const zField = resolveFieldInFrame(frame, names.z, index)
+  const wField = resolveFieldInFrame(frame, names.w, index)
   if (!xField || !yField || !zField || !wField) { return [] }
 
-  let timeField = timeFieldName ? frame.fields.find(field => field.name === timeFieldName) : undefined
+  let timeField = timeFieldName ? resolveFieldInFrame(frame, timeFieldName, index) : undefined
   if (!timeField) {
     timeField = frame.fields.find(field => field.type === FieldType.time)
   }

@@ -1,287 +1,189 @@
 import { PanelPlugin } from '@grafana/data'
-import { Attitude3DOptions } from './types'
+import { Attitude3DOptions, ORIGIN_TARGET_ID } from './types'
 import { Attitude3DPanel } from './components/Attitude3DPanel'
+import { ObjectsEditor } from './components/ObjectsEditor'
+import { TargetObjectEditor } from './components/TargetObjectEditor'
+import { migrateOptions } from './migrations'
 
-export const plugin = new PanelPlugin<Attitude3DOptions>(Attitude3DPanel).setPanelOptions((builder) => {
-  return builder
-    // Model
-    .addTextInput({
-      category: ['Model'],
-      path: 'modelURI',
-      name: 'Data',
-      description: 'glb, gltf or obj file for the model',
-      defaultValue: '',
-    })
-    .addRadio({
-      category: ['Model'],
-      path: 'modelRotationType',
-      name: 'Quaternion Input',
-      settings: {
-        options: [
-          { value: 'input', label: 'Constant' },
-          { value: 'field', label: 'Field' },
-        ],
-      },
-      defaultValue: 'input',
-    })
-    .addFieldNamePicker({
-      category: ['Model'],
-      path: 'modelRotationX',
-      name: 'Quaternion X',
-      showIf: (options) => options?.modelRotationType === 'field',
-    })
-    .addFieldNamePicker({
-      category: ['Model'],
-      path: 'modelRotationY',
-      name: 'Quaternion Y',
-      showIf: (options) => options?.modelRotationType === 'field',
-    })
-    .addFieldNamePicker({
-      category: ['Model'],
-      path: 'modelRotationZ',
-      name: 'Quaternion Z',
-      showIf: (options) => options?.modelRotationType === 'field',
-    })
-    .addFieldNamePicker({
-      category: ['Model'],
-      path: 'modelRotationW',
-      name: 'Quaternion W',
-      showIf: (options) => options?.modelRotationType === 'field',
-    })
-    .addNumberInput({
-      category: ['Model'],
-      path: 'modelRotationX',
-      name: 'Quaternion X',
-      defaultValue: 0.0,
-      showIf: (options) => options?.modelRotationType === 'input',
-    })
-    .addNumberInput({
-      category: ['Model'],
-      path: 'modelRotationY',
-      name: 'Quaternion Y',
-      defaultValue: 0.0,
-      showIf: (options) => options?.modelRotationType === 'input',
-    })
-    .addNumberInput({
-      category: ['Model'],
-      path: 'modelRotationZ',
-      name: 'Quaternion Z',
-      defaultValue: 0.0,
-      showIf: (options) => options?.modelRotationType === 'input',
-    })
-    .addNumberInput({
-      category: ['Model'],
-      path: 'modelRotationW',
-      name: 'Quaternion W',
-      defaultValue: 1.0,
-      showIf: (options) => options?.modelRotationType === 'input',
-    })
-    .addRadio({
-      category: ['Model'],
-      path: 'modelCenter',
-      name: 'Center',
-      description: 'Center of the model',
-      settings: {
-        options: [
-          { value: 'origin', label: 'Origin' },
-          { value: 'sphere', label: 'Sphere' },
-          { value: 'average', label: 'Average' },
-        ],
-      },
-      defaultValue: 'sphere',
-    })
-    .addBooleanSwitch({
-      category: ['Model'],
-      path: 'showHelper',
-      name: 'Helper',
-      description: 'Show the helpers',
-      defaultValue: false,
-    })
-    // Camera
-    .addRadio({
-      category: ['Camera'],
-      path: 'cameraDirectionType',
-      name: 'Direction Input',
-      settings: {
-        options: [
-          { value: 'input', label: 'Constant' },
-          { value: 'field', label: 'Field' },
-        ],
-      },
-      defaultValue: 'input',
-    })
-    .addFieldNamePicker({
-      category: ['Camera'],
-      path: 'cameraDirectionX',
-      name: 'Direction X',
-      showIf: (options) => options?.cameraDirectionType === 'field',
-    })
-    .addFieldNamePicker({
-      category: ['Camera'],
-      path: 'cameraDirectionY',
-      name: 'Direction Y',
-      showIf: (options) => options?.cameraDirectionType === 'field',
-    })
-    .addFieldNamePicker({
-      category: ['Camera'],
-      path: 'cameraDirectionZ',
-      name: 'Direction Z',
-      showIf: (options) => options?.cameraDirectionType === 'field',
-    })
-    .addNumberInput({
-      category: ['Camera'],
-      path: 'cameraDirectionX',
-      name: 'Direction X',
-      defaultValue: 0.0,
-      showIf: (options) => options?.cameraDirectionType === 'input',
-    })
-    .addNumberInput({
-      category: ['Camera'],
-      path: 'cameraDirectionY',
-      name: 'Direction Y',
-      defaultValue: 0.0,
-      showIf: (options) => options?.cameraDirectionType === 'input',
-    })
-    .addNumberInput({
-      category: ['Camera'],
-      path: 'cameraDirectionZ',
-      name: 'Direction Z',
-      defaultValue: 1.0,
-      showIf: (options) => options?.cameraDirectionType === 'input',
-    })
-    .addNumberInput({
-      category: ['Camera'],
-      path: 'cameraDistance',
-      name: 'Distance',
-      description: 'Camera distance from the model',
-      defaultValue: 2.0,
-    })
-    .addBooleanSwitch({
-      category: ['Camera'],
-      path: 'mouseControl',
-      name: 'Mouse Control',
-      description: 'Use mouse control to rotate the model',
-      defaultValue: false,
-    })
-    // Directional Light
-    .addRadio({
-      category: ['Directional Light'],
-      path: 'directionalLightDirectionType',
-      name: 'Direction Input',
-      settings: {
-        options: [
-          { value: 'input', label: 'Constant' },
-          { value: 'field', label: 'Field' },
-        ],
-      },
-      defaultValue: 'input',
-    })
-    .addFieldNamePicker({
-      category: ['Directional Light'],
-      path: 'directionalLightDirectionX',
-      name: 'Direction X',
-      showIf: (options) => options?.directionalLightDirectionType === 'field',
-    })
-    .addFieldNamePicker({
-      category: ['Directional Light'],
-      path: 'directionalLightDirectionY',
-      name: 'Direction Y',
-      showIf: (options) => options?.directionalLightDirectionType === 'field',
-    })
-    .addFieldNamePicker({
-      category: ['Directional Light'],
-      path: 'directionalLightDirectionZ',
-      name: 'Direction Z',
-      showIf: (options) => options?.directionalLightDirectionType === 'field',
-    })
-    .addNumberInput({
-      category: ['Directional Light'],
-      path: 'directionalLightDirectionX',
-      name: 'Direction X',
-      defaultValue: 0.0,
-      showIf: (options) => options?.directionalLightDirectionType === 'input',
-    })
-    .addNumberInput({
-      category: ['Directional Light'],
-      path: 'directionalLightDirectionY',
-      name: 'Direction Y',
-      defaultValue: 0.0,
-      showIf: (options) => options?.directionalLightDirectionType === 'input',
-    })
-    .addNumberInput({
-      category: ['Directional Light'],
-      path: 'directionalLightDirectionZ',
-      name: 'Direction Z',
-      defaultValue: 1.0,
-      showIf: (options) => options?.directionalLightDirectionType === 'input',
-    })
-    .addColorPicker({
-      category: ['Directional Light'],
-      path: 'directionalLightColor',
-      name: 'Color',
-      // description: 'Directional Light Color',
-      defaultValue: '#ffffff',
-    })
-    .addNumberInput({
-      category: ['Directional Light'],
-      path: 'directionalLightIntensity',
-      name: 'Intensity',
-      // description: '',
-      defaultValue: 10.0,
-    }) 
-    .addColorPicker({
-      category: ['Ambient Light'],
-      path: 'ambientLightColor',
-      name: 'Ambient Light Color',
-      // description: 'Ambient Light Color',
-      defaultValue: '#ffffff',
-    })
-    .addNumberInput({
-      category: ['Ambient Light'],
-      path: 'ambientLightIntensity',
-      name: 'Ambient Light Intensity',
-      // description: '',
-      defaultValue: 1.0,
-    }) 
-    .addColorPicker({
-      category: ['Background'],
-      path: 'backgroundColor',
-      name: 'Background Color',
-      description: 'Background color for the panel',
-      defaultValue: '#000000',
-    })
-    // Quaternion Interpolation
-    .addBooleanSwitch({
-      category: ['Quaternion Interpolation'],
-      path: 'quatInterpEnabled',
-      name: 'Enable',
-      description: 'Retain timestamped quaternions across refreshes and spherically interpolate to the end of the display range (${__to}). Typically this is extrapolation.',
-      defaultValue: false,
-      showIf: (options) => options?.modelRotationType === 'field',
-    })
-    .addFieldNamePicker({
-      category: ['Quaternion Interpolation'],
-      path: 'quatInterpTimeField',
-      name: 'Time Field',
-      description: 'Leave empty to auto-detect the time field of the frame',
-      showIf: (options) => options?.modelRotationType === 'field' && options?.quatInterpEnabled === true,
-    })
-    .addNumberInput({
-      category: ['Quaternion Interpolation'],
-      path: 'quatInterpBufferSize',
-      name: 'Retained Samples',
-      description: 'Number of timestamped quaternions retained across refreshes. 2 = constant angular velocity extrapolation.',
-      defaultValue: 2,
-      settings: { min: 2, integer: true },
-      showIf: (options) => options?.modelRotationType === 'field' && options?.quatInterpEnabled === true,
-    })
-    .addNumberInput({
-      category: ['Quaternion Interpolation'],
-      path: 'quatInterpMaxExtrapMs',
-      name: 'Max Extrapolation [ms]',
-      description: 'Stop extrapolating once the target time exceeds the newest sample by this much. 0 disables extrapolation.',
-      defaultValue: 5000,
-      settings: { min: 0 },
-      showIf: (options) => options?.modelRotationType === 'field' && options?.quatInterpEnabled === true,
-    })
-})
+export const plugin = new PanelPlugin<Attitude3DOptions>(Attitude3DPanel)
+  .setMigrationHandler((panel) => migrateOptions(panel.options))
+  .setPanelOptions((builder) => {
+    return builder
+      // Objects
+      .addCustomEditor({
+        category: ['Objects'],
+        id: 'objects',
+        path: 'objects',
+        name: '',
+        description: 'Add and configure the 3D models in the scene',
+        editor: ObjectsEditor,
+        defaultValue: [],
+      })
+      // Camera
+      .addCustomEditor({
+        category: ['Camera'],
+        id: 'cameraTargetId',
+        path: 'cameraTargetId',
+        name: 'Target',
+        description: 'Object the camera looks at. The camera distance scales with its size.',
+        editor: TargetObjectEditor,
+        defaultValue: ORIGIN_TARGET_ID,
+      })
+      .addRadio({
+        category: ['Camera'],
+        path: 'cameraDirectionType',
+        name: 'Direction Input',
+        settings: {
+          options: [
+            { value: 'input', label: 'Constant' },
+            { value: 'field', label: 'Field' },
+          ],
+        },
+        defaultValue: 'input',
+      })
+      .addFieldNamePicker({
+        category: ['Camera'],
+        path: 'cameraDirectionX',
+        name: 'Direction X',
+        showIf: (options) => options?.cameraDirectionType === 'field',
+      })
+      .addFieldNamePicker({
+        category: ['Camera'],
+        path: 'cameraDirectionY',
+        name: 'Direction Y',
+        showIf: (options) => options?.cameraDirectionType === 'field',
+      })
+      .addFieldNamePicker({
+        category: ['Camera'],
+        path: 'cameraDirectionZ',
+        name: 'Direction Z',
+        showIf: (options) => options?.cameraDirectionType === 'field',
+      })
+      .addNumberInput({
+        category: ['Camera'],
+        path: 'cameraDirectionX',
+        name: 'Direction X',
+        defaultValue: 0.0,
+        showIf: (options) => options?.cameraDirectionType === 'input',
+      })
+      .addNumberInput({
+        category: ['Camera'],
+        path: 'cameraDirectionY',
+        name: 'Direction Y',
+        defaultValue: 0.0,
+        showIf: (options) => options?.cameraDirectionType === 'input',
+      })
+      .addNumberInput({
+        category: ['Camera'],
+        path: 'cameraDirectionZ',
+        name: 'Direction Z',
+        defaultValue: 1.0,
+        showIf: (options) => options?.cameraDirectionType === 'input',
+      })
+      .addNumberInput({
+        category: ['Camera'],
+        path: 'cameraDistance',
+        name: 'Distance',
+        description: 'Camera distance from the target, in multiples of its radius',
+        defaultValue: 2.0,
+      })
+      .addBooleanSwitch({
+        category: ['Camera'],
+        path: 'mouseControl',
+        name: 'Mouse Control',
+        description: 'Use mouse control to rotate the view',
+        defaultValue: false,
+      })
+      // Directional Light
+      .addRadio({
+        category: ['Directional Light'],
+        path: 'directionalLightDirectionType',
+        name: 'Direction Input',
+        settings: {
+          options: [
+            { value: 'input', label: 'Constant' },
+            { value: 'field', label: 'Field' },
+          ],
+        },
+        defaultValue: 'input',
+      })
+      .addFieldNamePicker({
+        category: ['Directional Light'],
+        path: 'directionalLightDirectionX',
+        name: 'Direction X',
+        showIf: (options) => options?.directionalLightDirectionType === 'field',
+      })
+      .addFieldNamePicker({
+        category: ['Directional Light'],
+        path: 'directionalLightDirectionY',
+        name: 'Direction Y',
+        showIf: (options) => options?.directionalLightDirectionType === 'field',
+      })
+      .addFieldNamePicker({
+        category: ['Directional Light'],
+        path: 'directionalLightDirectionZ',
+        name: 'Direction Z',
+        showIf: (options) => options?.directionalLightDirectionType === 'field',
+      })
+      .addNumberInput({
+        category: ['Directional Light'],
+        path: 'directionalLightDirectionX',
+        name: 'Direction X',
+        defaultValue: 0.0,
+        showIf: (options) => options?.directionalLightDirectionType === 'input',
+      })
+      .addNumberInput({
+        category: ['Directional Light'],
+        path: 'directionalLightDirectionY',
+        name: 'Direction Y',
+        defaultValue: 0.0,
+        showIf: (options) => options?.directionalLightDirectionType === 'input',
+      })
+      .addNumberInput({
+        category: ['Directional Light'],
+        path: 'directionalLightDirectionZ',
+        name: 'Direction Z',
+        defaultValue: 1.0,
+        showIf: (options) => options?.directionalLightDirectionType === 'input',
+      })
+      .addColorPicker({
+        category: ['Directional Light'],
+        path: 'directionalLightColor',
+        name: 'Color',
+        defaultValue: '#ffffff',
+      })
+      .addNumberInput({
+        category: ['Directional Light'],
+        path: 'directionalLightIntensity',
+        name: 'Intensity',
+        defaultValue: 10.0,
+      })
+      // Ambient Light
+      .addColorPicker({
+        category: ['Ambient Light'],
+        path: 'ambientLightColor',
+        name: 'Color',
+        defaultValue: '#ffffff',
+      })
+      .addNumberInput({
+        category: ['Ambient Light'],
+        path: 'ambientLightIntensity',
+        name: 'Intensity',
+        defaultValue: 1.0,
+      })
+      // Scene
+      .addBooleanSwitch({
+        category: ['Scene'],
+        path: 'showHelper',
+        name: 'Helper',
+        description: 'Show the axes helper',
+        defaultValue: false,
+      })
+      .addColorPicker({
+        category: ['Scene'],
+        path: 'backgroundColor',
+        name: 'Background Color',
+        description: 'Background color for the panel',
+        defaultValue: '#000000',
+      })
+  })

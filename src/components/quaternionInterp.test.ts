@@ -101,8 +101,12 @@ describe('sampleQuaternionAt', () => {
   })
 })
 
-const makeFrame = (fields: Array<{ name: string; type: FieldType; values: number[] }>): DataFrame => {
+const makeFrame = (
+  fields: Array<{ name: string; type: FieldType; values: number[] }>,
+  refId?: string,
+): DataFrame => {
   return {
+    refId,
     fields: fields.map(f => ({ name: f.name, type: f.type, values: f.values, config: {} })),
     length: fields.length > 0 ? fields[0].values.length : 0,
   } as unknown as DataFrame
@@ -166,6 +170,46 @@ describe('collectQuatSamples', () => {
     const samples = collectQuatSamples(frames, names, '', 10, 42)
     expect(samples).toHaveLength(1)
     expect(samples[0].t).toBe(42)
+    expect(samples[0].q.equals(new THREE.Quaternion(0, 0, 1, 0))).toBe(true)
+  })
+
+  it('resolves a qualified spec to the matching frame among same-named fields', () => {
+    const frames = [
+      makeFrame([
+        { name: 'time', type: FieldType.time, values: [0] },
+        { name: 'q_x', type: FieldType.number, values: [0] },
+        { name: 'q_y', type: FieldType.number, values: [0] },
+        { name: 'q_z', type: FieldType.number, values: [0] },
+        { name: 'q_w', type: FieldType.number, values: [1] },
+      ], 'A'),
+      makeFrame([
+        { name: 'time', type: FieldType.time, values: [0] },
+        { name: 'q_x', type: FieldType.number, values: [0] },
+        { name: 'q_y', type: FieldType.number, values: [0] },
+        { name: 'q_z', type: FieldType.number, values: [1] },
+        { name: 'q_w', type: FieldType.number, values: [0] },
+      ], 'B'),
+    ]
+
+    const qualifiedNames = { x: 'B.q_x', y: 'B.q_y', z: 'B.q_z', w: 'B.q_w' }
+    const samples = collectQuatSamples(frames, qualifiedNames, 'time', 10, 0)
+    expect(samples).toHaveLength(1)
+    expect(samples[0].q.equals(new THREE.Quaternion(0, 0, 1, 0))).toBe(true)
+  })
+
+  it('resolves an unqualified (bare) spec as before', () => {
+    const frames = [
+      makeFrame([
+        { name: 'time', type: FieldType.time, values: [0] },
+        { name: 'x', type: FieldType.number, values: [0] },
+        { name: 'y', type: FieldType.number, values: [0] },
+        { name: 'z', type: FieldType.number, values: [1] },
+        { name: 'w', type: FieldType.number, values: [0] },
+      ], 'A'),
+    ]
+
+    const samples = collectQuatSamples(frames, names, 'time', 10, 0)
+    expect(samples).toHaveLength(1)
     expect(samples[0].q.equals(new THREE.Quaternion(0, 0, 1, 0))).toBe(true)
   })
 })
