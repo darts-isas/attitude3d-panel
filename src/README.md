@@ -67,7 +67,7 @@ Panel for rendering 3D objects
     * Position of the model
   * Quaternion X, Y, Z, W
     * Quaternion for the model
-  * Interpolation
+  * Attitude Interpolation
     * See [Quaternion Interpolation](#quaternion-interpolation) below
 
   Position X/Y/Z and Quaternion X/Y/Z/W each have their own source:
@@ -78,7 +78,7 @@ Panel for rendering 3D objects
 
 ## Quaternion Interpolation
 
-This is configured per object, under the object's own Interpolation settings in Objects.
+This is configured per object, under the object's own Attitude Interpolation settings in Objects.
 
 * Enable
   * Retain timestamped quaternions across refreshes and spherically interpolate to the end of
@@ -94,9 +94,11 @@ This is configured per object, under the object's own Interpolation settings in 
 * Retained Samples
   * Number of timestamped quaternions retained across refreshes. 2 = constant angular velocity
     extrapolation. Default: 2
-* Max Extrapolation [ms]
-  * Stop extrapolating once the target time exceeds the newest sample by this much. 0 disables
-    extrapolation (interpolation only). Default: 5000
+* Catch-up Blend [ms]
+  * A new sample shifts the extrapolation basis to a new pair of points, which can disagree with
+    what was on screen if the attitude's rate of change shifted mid-extrapolation. Instead of
+    snapping onto the corrected orientation, it's blended in over this many ms. 0 disables
+    blending (snap immediately). Default: 300
 
 ### How it works
 
@@ -109,12 +111,19 @@ On each animation frame:
 1. The target time is the end of the display range (`${__to}`). For a relative range (one
    starting with `now`), it also advances by the wall-clock time elapsed since the data
    arrived, so it keeps tracking "now" between refreshes
-2. The target is clamped to `newest sample time + Max Extrapolation [ms]`
-3. If the clamped target is at or past the newest sample (the usual case) the last two samples
-   are used; otherwise the pair bracketing the target is used
-4. With `u = (target - a.t) / (b.t - a.t)`, the result is `slerp(a, b, u)`. three.js implements
+2. If the target is at or past the newest sample (the usual case) the last two samples are used;
+   otherwise the pair bracketing the target is used. There is no cap on how far past the newest
+   sample the target can go: a stalled data source keeps extrapolating at the last known rate
+   indefinitely rather than freezing
+3. With `u = (target - a.t) / (b.t - a.t)`, the result is `slerp(a, b, u)`. three.js implements
    slerp with the great-circle formula, so `u > 1` continues along the same great circle at the
    same angular velocity and stays a unit quaternion
+4. Whenever a new sample changes which pair of points backs the extrapolation, the *previous*
+   pair is frozen and both trajectories keep being evaluated: the frozen (old) pair extrapolated
+   forward, and the new pair's corrected value. The displayed orientation is
+   `slerp(old, new, ratio)`, with `ratio` easing 0 → 1 (smoothstep) over `Catch-up Blend [ms]`, so
+   it matches the old trajectory exactly at the start of the blend and the corrected one exactly
+   at the end — no snap, and no dependence on frame rate
 
 With the default `Retained Samples` of 2 this is exactly constant-angular-velocity extrapolation
 from the two newest attitudes. A buffer with a single sample applies that attitude as-is, and a

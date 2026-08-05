@@ -90,9 +90,9 @@ Position X/Y/Z and Quaternion X/Y/Z/W each choose their own source:
 
 ## Quaternion Interpolation
 
-Configured **per model**, under that model's *Interpolation* settings in **Objects**.
+Configured **per model**, under that model's *Attitude Interpolation* settings in **Objects**.
 
-<img src="screenshots/menu4.png" alt="Interpolation section with Enable, Time Field, Retained Samples, and Max Extrapolation" width="250" />
+<img src="screenshots/menu4.png" alt="Attitude Interpolation section with Enable, Time Field, Retained Samples, and Catch-up Blend" width="250" />
 *Panel view — enable interpolation to keep a model turning between dashboard refreshes.*
 
 Grafana delivers data in discrete refreshes, so an attitude bound directly to a field only moves when new data arrives. With interpolation enabled, the panel retains a small number of timestamped quaternions across refreshes and spherically interpolates — in the usual case, *extrapolates* — to the end of the display range, so the model keeps turning smoothly between refreshes.
@@ -102,7 +102,7 @@ Grafana delivers data in discrete refreshes, so an attitude bound directly to a 
   - When the display range is relative (for example `now-5m` to `now`), the extrapolation target advances every frame by the time elapsed since the data arrived.
 - **Time Field**: Time field used for the retained quaternion samples. Leave empty to auto-detect the time field of the target frame.
 - **Retained Samples**: Number of timestamped quaternions retained across refreshes. `2` gives constant angular-velocity extrapolation. Default: `2`.
-- **Max Extrapolation [ms]**: Stop extrapolating once the target time exceeds the newest sample by this much, so a stalled data source freezes the model instead of spinning it away. `0` disables extrapolation, leaving interpolation only. Default: `5000`.
+- **Catch-up Blend [ms]**: When a new sample shifts which pair of points backs the extrapolation, blend into the corrected orientation over this many ms instead of snapping onto it. `0` disables blending. Default: `300`.
 
 ### How it works
 
@@ -111,9 +111,9 @@ Grafana delivers data in discrete refreshes, so an attitude bound directly to a 
 **On each animation frame**, the panel picks a target time and samples the retained buffer at it:
 
 1. **Target time.** The end of the display range (`${__to}`). If the range is relative — anything starting with `now` — the target additionally advances by the wall-clock time elapsed since the data arrived, so it keeps tracking "now" between refreshes rather than freezing at the last refresh instant.
-2. **Clamp.** The target is capped at `newest sample time + Max Extrapolation [ms]`.
-3. **Pick a pair.** If the clamped target is at or past the newest sample — the usual case — the last two samples are used. Otherwise the bracketing pair around the target is used, which makes the motion inside the retained window a piecewise slerp.
-4. **Slerp.** With `u = (target - a.t) / (b.t - a.t)`, the result is `slerp(a, b, u)`. Three.js implements slerp with the great-circle formula, so `u > 1` continues along the same great circle at the same angular velocity and the result stays a unit quaternion — no renormalization drift, no gimbal artifacts.
+2. **Pick a pair.** If the target is at or past the newest sample — the usual case — the last two samples are used. Otherwise the bracketing pair around the target is used, which makes the motion inside the retained window a piecewise slerp. There is no cap on how far past the newest sample the target can go: a stalled data source keeps extrapolating at the last known rate indefinitely rather than freezing.
+3. **Slerp.** With `u = (target - a.t) / (b.t - a.t)`, the result is `slerp(a, b, u)`. Three.js implements slerp with the great-circle formula, so `u > 1` continues along the same great circle at the same angular velocity and the result stays a unit quaternion — no renormalization drift, no gimbal artifacts.
+4. **Catch-up blend.** Whenever a new sample changes the pair of points backing the extrapolation, the *previous* pair is frozen and kept extrapolating in parallel with the newly corrected trajectory. The displayed orientation is `slerp(old, new, ratio)`, with `ratio` easing 0 → 1 (smoothstep) over *Catch-up Blend [ms]* — matching the old trajectory exactly at the start of the blend and the corrected one exactly at the end, so a mid-flight rate change doesn't look like a jump-cut.
 
 With the default *Retained Samples* of `2`, this is exactly constant-angular-velocity extrapolation from the two newest attitudes. Raising it does not smooth the extrapolation any further — the leading pair still drives it — but it does let the panel interpolate correctly if the target time falls back inside the retained window.
 

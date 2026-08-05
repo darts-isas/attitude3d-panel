@@ -1,21 +1,45 @@
 import * as THREE from 'three'
 import { DataFrame, FieldType } from '@grafana/data'
-import { collectQuatSamples, QuatSample, sampleQuaternionAt } from './quaternionInterp'
+import { collectQuatSamples, QuatSample, sampleQuaternionAt, slerpPair } from './quaternionInterp'
 
 const qFromAxisAngleY = (degrees: number) => {
   return new THREE.Quaternion().setFromAxisAngle(new THREE.Vector3(0, 1, 0), THREE.MathUtils.degToRad(degrees))
 }
 
+describe('slerpPair', () => {
+  it('slerps between the pair and extrapolates past it at the same rate, unbounded', () => {
+    const a: QuatSample = { t: 0, q: qFromAxisAngleY(0) }
+    const b: QuatSample = { t: 1000, q: qFromAxisAngleY(90) }
+
+    expect(slerpPair(a, b, 500).angleTo(qFromAxisAngleY(45))).toBeLessThan(1e-6)
+    expect(slerpPair(a, b, 100_000).angleTo(qFromAxisAngleY(9000))).toBeLessThan(1e-6)
+  })
+
+  it('clamps u below 0 when targetMs is before a', () => {
+    const a: QuatSample = { t: 1000, q: qFromAxisAngleY(0) }
+    const b: QuatSample = { t: 2000, q: qFromAxisAngleY(90) }
+
+    expect(slerpPair(a, b, -5000).angleTo(qFromAxisAngleY(0))).toBeLessThan(1e-6)
+  })
+
+  it('returns b as-is when dt is under 1ms, avoiding division by a near-zero interval', () => {
+    const a: QuatSample = { t: 1000, q: qFromAxisAngleY(0) }
+    const b: QuatSample = { t: 1000, q: qFromAxisAngleY(90) }
+
+    expect(slerpPair(a, b, -5000).angleTo(qFromAxisAngleY(90))).toBeLessThan(1e-6)
+  })
+})
+
 describe('sampleQuaternionAt', () => {
   it('returns null for an empty buffer', () => {
-    expect(sampleQuaternionAt([], 0, 1000)).toBeNull()
+    expect(sampleQuaternionAt([], 0)).toBeNull()
   })
 
   it('returns a clone of the single sample', () => {
     const q = qFromAxisAngleY(30)
     const buffer: QuatSample[] = [{ t: 0, q }]
 
-    const result = sampleQuaternionAt(buffer, 12345, 1000)
+    const result = sampleQuaternionAt(buffer, 12345)
     expect(result).not.toBeNull()
     expect(result!.equals(q)).toBe(true)
 
@@ -29,7 +53,7 @@ describe('sampleQuaternionAt', () => {
     const q1 = qFromAxisAngleY(90)
     const buffer: QuatSample[] = [{ t: 0, q: q0 }, { t: 1000, q: q1 }]
 
-    const result = sampleQuaternionAt(buffer, 500, 1000)
+    const result = sampleQuaternionAt(buffer, 500)
     const expected = qFromAxisAngleY(45)
     expect(result).not.toBeNull()
     expect(result!.angleTo(expected)).toBeLessThan(1e-6)
@@ -40,8 +64,8 @@ describe('sampleQuaternionAt', () => {
     const q1 = qFromAxisAngleY(90)
     const buffer: QuatSample[] = [{ t: 0, q: q0 }, { t: 1000, q: q1 }]
 
-    expect(sampleQuaternionAt(buffer, 0, 1000)!.angleTo(q0)).toBeLessThan(1e-6)
-    expect(sampleQuaternionAt(buffer, 1000, 1000)!.angleTo(q1)).toBeLessThan(1e-6)
+    expect(sampleQuaternionAt(buffer, 0)!.angleTo(q0)).toBeLessThan(1e-6)
+    expect(sampleQuaternionAt(buffer, 1000)!.angleTo(q1)).toBeLessThan(1e-6)
   })
 
   it('extrapolates past the last sample while staying unit length', () => {
@@ -50,21 +74,23 @@ describe('sampleQuaternionAt', () => {
     const buffer: QuatSample[] = [{ t: 0, q: q0 }, { t: 1000, q: q1 }]
 
     // u = 2 -> 180 degrees around Y
-    const result = sampleQuaternionAt(buffer, 2000, 10000)
+    const result = sampleQuaternionAt(buffer, 2000)
     const expected = qFromAxisAngleY(180)
     expect(result).not.toBeNull()
     expect(result!.angleTo(expected)).toBeLessThan(1e-6)
     expect(Math.abs(result!.length() - 1)).toBeLessThan(1e-9)
   })
 
-  it('clamps extrapolation to maxExtrapMs', () => {
+  it('keeps extrapolating at the same rate indefinitely, with no cap', () => {
     const q0 = qFromAxisAngleY(0)
     const q1 = qFromAxisAngleY(90)
     const buffer: QuatSample[] = [{ t: 0, q: q0 }, { t: 1000, q: q1 }]
 
-    const result = sampleQuaternionAt(buffer, 1_000_000, 0)
+    // u = 100 -> 9000 degrees around Y, i.e. 25 full turns past q1 (never clamped)
+    const result = sampleQuaternionAt(buffer, 100_000)
+    const expected = qFromAxisAngleY(9000)
     expect(result).not.toBeNull()
-    expect(result!.angleTo(q1)).toBeLessThan(1e-6)
+    expect(result!.angleTo(expected)).toBeLessThan(1e-6)
   })
 
   it('does not diverge when dt is 0', () => {
@@ -72,7 +98,7 @@ describe('sampleQuaternionAt', () => {
     const q1 = qFromAxisAngleY(90)
     const buffer: QuatSample[] = [{ t: 1000, q: q0 }, { t: 1000, q: q1 }]
 
-    const result = sampleQuaternionAt(buffer, 1000, 1000)
+    const result = sampleQuaternionAt(buffer, 1000)
     expect(result).not.toBeNull()
     expect(result!.angleTo(q1)).toBeLessThan(1e-6)
   })
@@ -83,10 +109,10 @@ describe('sampleQuaternionAt', () => {
     const q2 = qFromAxisAngleY(180)
     const buffer: QuatSample[] = [{ t: 0, q: q0 }, { t: 1000, q: q1 }, { t: 2000, q: q2 }]
 
-    const first = sampleQuaternionAt(buffer, 500, 1000)
+    const first = sampleQuaternionAt(buffer, 500)
     expect(first!.angleTo(qFromAxisAngleY(45))).toBeLessThan(1e-6)
 
-    const second = sampleQuaternionAt(buffer, 1500, 1000)
+    const second = sampleQuaternionAt(buffer, 1500)
     expect(second!.angleTo(qFromAxisAngleY(135))).toBeLessThan(1e-6)
   })
 
@@ -95,7 +121,7 @@ describe('sampleQuaternionAt', () => {
     const q1 = qFromAxisAngleY(90)
     const buffer: QuatSample[] = [{ t: 1000, q: q0 }, { t: 2000, q: q1 }]
 
-    const result = sampleQuaternionAt(buffer, -5000, 1000)
+    const result = sampleQuaternionAt(buffer, -5000)
     expect(result).not.toBeNull()
     expect(result!.angleTo(q0)).toBeLessThan(1e-6)
   })

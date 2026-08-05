@@ -8,7 +8,7 @@ import * as THREE from 'three'
 import { OrbitControls } from 'three-stdlib'
 import { GLTFLoader } from 'three/examples/jsm/loaders/GLTFLoader'
 import { OBJLoader } from 'three/examples/jsm/loaders/OBJLoader'
-import { collectQuatSamples, sampleQuaternionAt, QuatSample } from './quaternionInterp'
+import { collectQuatSamples, sampleQuaternionAt, slerpPair, QuatSample } from './quaternionInterp'
 import { getDataFieldValue } from './dataFields'
 import { disposeObject3D, removeAndDispose } from './threeDispose'
 
@@ -132,6 +132,11 @@ type ObjectEntry = {
   loadToken: number
   quatBuffer: QuatSample[]
   quatBufferKey: string
+  lastBufferTail: number                     // t of the last sample seen on the previous tick, to detect a new arrival
+  lastBufferPair: [QuatSample, QuatSample] | null  // the (n-2, n-1) pair backing extrapolation, snapshotted each tick
+  catchUpFrom: [QuatSample, QuatSample] | null     // the pair frozen at the start of an active catch-up blend
+  catchUpStart: number                       // Date.now() when the active blend began
+  catchUpDeadline: number                    // Date.now()-based; a catch-up blend is active while now < this
 }
 
 const effRadius = (e: ObjectEntry) => Math.max(e.baseRadius * e.scale, 1e-7)
@@ -182,7 +187,7 @@ export const Attitude3DPanel: React.FC<Props> = ({ options, data, width, height 
 
   // Per-object interpolation config and the camera-target id, refreshed every render so
   // the rAF loop (a closure created once in initRenderer) always sees the latest values.
-  const objectCfgRef = useRef<Map<string, { interpEnabled: boolean; interpMaxExtrapMs: number }>>(new Map())
+  const objectCfgRef = useRef<Map<string, { interpEnabled: boolean; interpCatchUpMs: number }>>(new Map())
   const cameraTargetIdRef = useRef<string>(ORIGIN_TARGET_ID)
 
   const lastData = useRef<unknown>(null)
@@ -248,7 +253,7 @@ export const Attitude3DPanel: React.FC<Props> = ({ options, data, width, height 
   objectList.forEach(o => {
     objectCfgRef.current.set(o.id, {
       interpEnabled: isInterpActive(o),
-      interpMaxExtrapMs: Number.isFinite(Number(o.interpMaxExtrapMs)) ? Math.max(0, Number(o.interpMaxExtrapMs)) : 0,
+      interpCatchUpMs: Number.isFinite(Number(o.interpCatchUpMs)) ? Math.max(0, Number(o.interpCatchUpMs)) : 0,
     })
   })
 
@@ -268,16 +273,48 @@ export const Attitude3DPanel: React.FC<Props> = ({ options, data, width, height 
     const st = extrapState.current
     if (!st) { return }
 
+    const now = Date.now()
+
     const target = st.followNow
-      ? st.timeRangeToMs + (Date.now() - dataArrivedAt.current)
+      ? st.timeRangeToMs + (now - dataArrivedAt.current)
       : st.timeRangeToMs
 
     objectsRef.current.forEach((entry, id) => {
       const cfg = objectCfgRef.current.get(id)
       if (!cfg || !cfg.interpEnabled) { return }
 
-      const q = sampleQuaternionAt(entry.quatBuffer, target, cfg.interpMaxExtrapMs)
-      if (q) { entry.root.quaternion.copy(q) }
+      const buffer = entry.quatBuffer
+      const n = buffer.length
+      if (n === 0) { return }
+
+      const qNew = sampleQuaternionAt(buffer, target)
+      if (!qNew) { return }
+
+      const tLast = buffer[n - 1].t
+      if (entry.lastBufferTail !== tLast) {
+        // A new real sample just shifted the extrapolation basis (the last two buffered
+        // points) out from under us. Freeze the pair that was driving extrapolation up to
+        // this tick so we can crossfade away from it below, instead of snapping straight
+        // onto the corrected orientation.
+        if (entry.lastBufferPair && cfg.interpCatchUpMs > 0) {
+          entry.catchUpFrom = entry.lastBufferPair
+          entry.catchUpStart = now
+          entry.catchUpDeadline = now + cfg.interpCatchUpMs
+        }
+        entry.lastBufferTail = tLast
+        entry.lastBufferPair = n >= 2 ? [buffer[n - 2], buffer[n - 1]] : null
+      }
+
+      if (entry.catchUpFrom && entry.catchUpDeadline > now) {
+        const [a, b] = entry.catchUpFrom
+        const qOld = slerpPair(a, b, target)
+        const raw = (now - entry.catchUpStart) / (entry.catchUpDeadline - entry.catchUpStart)
+        const ratio = raw * raw * (3 - 2 * raw) // smoothstep: eases in/out at both ends
+        entry.root.quaternion.copy(qOld).slerp(qNew, ratio)
+      }
+      else {
+        entry.root.quaternion.copy(qNew)
+      }
     })
   }
 
@@ -585,6 +622,11 @@ export const Attitude3DPanel: React.FC<Props> = ({ options, data, width, height 
           loadToken: 0,
           quatBuffer: [],
           quatBufferKey: '',
+          lastBufferTail: -Infinity,
+          lastBufferPair: null,
+          catchUpFrom: null,
+          catchUpStart: 0,
+          catchUpDeadline: 0,
         }
         root.scale.setScalar(o.scale)
         objectsRef.current.set(o.id, entry)

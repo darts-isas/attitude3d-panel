@@ -305,7 +305,7 @@ export const ObjectsEditor = ({ value, onChange, context }: StandardEditorProps<
             data={context.data}
           />
 
-          <div className={styles.sectionTitle}>Interpolation</div>
+          <div className={styles.sectionTitle}>Attitude Interpolation</div>
           <Field
             label="Enable"
             description="Keep timestamped quaternions across refreshes and slerp (typically extrapolate) toward the end of the display time range ($__to)."
@@ -342,14 +342,17 @@ export const ObjectsEditor = ({ value, onChange, context }: StandardEditorProps<
                 />
               </Field>
 
-              <Field label="Max Extrapolation [ms]">
+              <Field
+                label="Catch-up Blend [ms]"
+                description="When a new sample shifts the extrapolation basis, blend into the corrected orientation over this many ms instead of snapping. 0 disables blending."
+              >
                 <Input
                   type="number"
                   min={0}
-                  value={selected.interpMaxExtrapMs}
+                  value={selected.interpCatchUpMs}
                   onChange={(e) =>
                     updateObject(selectedIndex, {
-                      interpMaxExtrapMs: Math.max(0, parseInt(e.currentTarget.value, 10) || 0),
+                      interpCatchUpMs: Math.max(0, parseInt(e.currentTarget.value, 10) || 0),
                     })
                   }
                 />

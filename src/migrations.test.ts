@@ -70,14 +70,13 @@ describe('migrateOptions', () => {
       quatInterpEnabled: true,
       quatInterpTimeField: 'time',
       quatInterpBufferSize: 10,
-      quatInterpMaxExtrapMs: 1000,
     })
 
     const [object] = result.objects
     expect(object.interpEnabled).toBe(true)
     expect(object.interpTimeField).toBe('time')
     expect(object.interpBufferSize).toBe(10)
-    expect(object.interpMaxExtrapMs).toBe(1000)
+    expect(object.interpCatchUpMs).toBe(300)
   })
 
   it('defaults interp* fields when quatInterp* are unset', () => {
@@ -89,7 +88,7 @@ describe('migrateOptions', () => {
     expect(object.interpEnabled).toBe(false)
     expect(object.interpTimeField).toBe('')
     expect(object.interpBufferSize).toBe(2)
-    expect(object.interpMaxExtrapMs).toBe(5000)
+    expect(object.interpCatchUpMs).toBe(300)
   })
 
   it('sets position to const 0, visible true, scale 1, and cameraTargetId to origin', () => {

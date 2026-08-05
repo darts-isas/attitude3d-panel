@@ -33,7 +33,7 @@ export interface ModelObject {
   interpEnabled: boolean;
   interpTimeField: string;
   interpBufferSize: number;
-  interpMaxExtrapMs: number;
+  interpCatchUpMs: number;
 }
 
 export interface Attitude3DOptions {
@@ -90,5 +90,5 @@ export const createModelObject = (id: string, name: string): ModelObject => ({
   interpEnabled: false,
   interpTimeField: '',
   interpBufferSize: 2,
-  interpMaxExtrapMs: 5000,
+  interpCatchUpMs: 300,
 });

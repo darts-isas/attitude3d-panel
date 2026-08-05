@@ -13,8 +13,8 @@ export type LegacyOptions = {
   quatInterpEnabled?: boolean
   quatInterpTimeField?: string
   quatInterpBufferSize?: number
-  quatInterpMaxExtrapMs?: number
   // Removed dead options — stripped on migration.
+  quatInterpMaxExtrapMs?: unknown
   cameraDistanceType?: unknown
   directionalLightIntensityType?: unknown
   ambientLightIntensityType?: unknown
@@ -42,7 +42,7 @@ export const migrateOptions = (rawOptions: unknown): Attitude3DOptions => {
     quatInterpEnabled,
     quatInterpTimeField,
     quatInterpBufferSize,
-    quatInterpMaxExtrapMs,
+    quatInterpMaxExtrapMs: _quatInterpMaxExtrapMs,
     cameraDistanceType: _cameraDistanceType,
     directionalLightIntensityType: _directionalLightIntensityType,
     ambientLightIntensityType: _ambientLightIntensityType,
@@ -74,7 +74,7 @@ export const migrateOptions = (rawOptions: unknown): Attitude3DOptions => {
     interpEnabled: quatInterpEnabled === true,
     interpTimeField: quatInterpTimeField ?? '',
     interpBufferSize: quatInterpBufferSize ?? 2,
-    interpMaxExtrapMs: quatInterpMaxExtrapMs ?? 5000,
+    interpCatchUpMs: 300,
   }
 
   // The legacy model sat at the origin and the camera looked at the origin, so

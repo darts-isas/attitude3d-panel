@@ -4,36 +4,49 @@ import { resolveFieldInFrame } from './dataFields'
 
 export type QuatSample = { t: number; q: THREE.Quaternion }
 
+// Slerp between a fixed pair, extrapolating past b (or before a) along the same great
+// circle. THREE.Quaternion.slerp implements the great-circle formula
+// (ratioA = sin((1-t)*theta)/sin(theta), ratioB = sin(t*theta)/sin(theta)), so u outside
+// [0, 1] still extrapolates correctly while keeping the result unit length. Exposed
+// separately from sampleQuaternionAt so callers can keep riding a pair that has since
+// fallen out of the live buffer (e.g. to crossfade away from it).
+export const slerpPair = (a: QuatSample, b: QuatSample, targetMs: number): THREE.Quaternion => {
+  const dt = b.t - a.t
+  if (dt < 1) { return b.q.clone() }
+
+  let u = (targetMs - a.t) / dt
+  if (u < 0) { u = 0 }
+
+  return a.q.clone().slerp(b.q, u)
+}
+
 // Sample a quaternion buffer (sorted by t ascending) at targetMs, slerping between the
-// bracketing pair. THREE.Quaternion.slerp implements the great-circle formula
-// (ratioA = sin((1-t)*theta)/sin(theta), ratioB = sin(t*theta)/sin(theta)), so u > 1 still
-// extrapolates correctly along the great circle while keeping the result unit length.
+// bracketing pair. Extrapolation past the last sample is unbounded: it keeps riding the
+// last two samples' rate indefinitely until a new sample arrives.
 export const sampleQuaternionAt = (
   buffer: QuatSample[],
   targetMs: number,
-  maxExtrapMs: number,
 ): THREE.Quaternion | null => {
   if (buffer.length === 0) { return null }
   if (buffer.length === 1) { return buffer[0].q.clone() }
 
   const n = buffer.length
   const tLast = buffer[n - 1].t
-  const tEff = Math.min(targetMs, tLast + maxExtrapMs)
 
   let a = buffer[0]
   let b = buffer[1]
 
-  if (tEff >= tLast) {
+  if (targetMs >= tLast) {
     a = buffer[n - 2]
     b = buffer[n - 1]
   }
-  else if (tEff <= buffer[0].t) {
+  else if (targetMs <= buffer[0].t) {
     a = buffer[0]
     b = buffer[1]
   }
   else {
     for (let i = 0; i < n - 1; i++) {
-      if (buffer[i].t <= tEff && tEff <= buffer[i + 1].t) {
+      if (buffer[i].t <= targetMs && targetMs <= buffer[i + 1].t) {
         a = buffer[i]
         b = buffer[i + 1]
         break
@@ -41,13 +54,7 @@ export const sampleQuaternionAt = (
     }
   }
 
-  const dt = b.t - a.t
-  if (dt < 1) { return b.q.clone() }
-
-  let u = (tEff - a.t) / dt
-  if (u < 0) { u = 0 }
-
-  return a.q.clone().slerp(b.q, u)
+  return slerpPair(a, b, targetMs)
 }
 
 export const collectQuatSamples = (
