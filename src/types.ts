@@ -20,6 +20,10 @@ export interface ModelObject {
   modelCenter: 'origin' | 'sphere' | 'average';
   scale: number;
 
+  /** Opacity in 0-1, fixed or field-bound. Values outside 0-1 are clamped; existing
+   * dashboards without this field are treated as fully opaque (1). */
+  opacity: DataField;
+
   posX: DataField;
   posY: DataField;
   posZ: DataField;
@@ -80,6 +84,7 @@ export const createModelObject = (id: string, name: string): ModelObject => ({
   modelURI: '',
   modelCenter: 'sphere',
   scale: 1,
+  opacity: createDataField('1'),
   posX: createDataField('0'),
   posY: createDataField('0'),
   posZ: createDataField('0'),

@@ -64,6 +64,7 @@ export const migrateOptions = (rawOptions: unknown): Attitude3DOptions => {
     modelURI: modelURI ?? '',
     modelCenter: modelCenter ?? 'sphere',
     scale: 1,
+    opacity: { sourceType: 'const', value: '1' },
     posX: { sourceType: 'const', value: '0' },
     posY: { sourceType: 'const', value: '0' },
     posZ: { sourceType: 'const', value: '0' },

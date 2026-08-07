@@ -12,7 +12,7 @@ import {
   Switch,
   useStyles2,
 } from '@grafana/ui'
-import { createModelObject, DataField, ModelObject } from '../types'
+import { createDataField, createModelObject, DataField, ModelObject } from '../types'
 import { DataFieldEditor } from './DataFieldEditor'
 import { getTimeFieldOptions } from './dataFields'
 
@@ -258,6 +258,15 @@ export const ObjectsEditor = ({ value, onChange, context }: StandardEditorProps<
               onChange={(e) => updateObject(selectedIndex, { scale: parseFloat(e.currentTarget.value) || 1 })}
             />
           </Field>
+
+          <DataFieldEditor
+            label="Opacity"
+            value={selected.opacity ?? createDataField('1')}
+            onChange={(opacity: DataField) => updateObject(selectedIndex, { opacity })}
+            data={context.data}
+            fieldKind="number"
+            placeholder="0-1 (1 = opaque)"
+          />
 
           <div className={styles.sectionTitle}>Position</div>
           <DataFieldEditor

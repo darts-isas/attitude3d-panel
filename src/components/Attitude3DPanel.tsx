@@ -2,14 +2,14 @@ import React, { useEffect, useRef, useState } from 'react'
 import { LoadingState, PanelProps } from '@grafana/data'
 import { Attitude3DOptions, DataField, ModelObject, ORIGIN_TARGET_ID } from 'types'
 import { css, cx } from '@emotion/css'
-import { useStyles2, /*useTheme2*/ } from '@grafana/ui'
+import { IconButton, useStyles2, /*useTheme2*/ } from '@grafana/ui'
 import { getTemplateSrv } from '@grafana/runtime'
 import * as THREE from 'three'
 import { OrbitControls } from 'three-stdlib'
 import { GLTFLoader } from 'three/examples/jsm/loaders/GLTFLoader'
 import { OBJLoader } from 'three/examples/jsm/loaders/OBJLoader'
 import { collectQuatSamples, sampleQuaternionAt, slerpPair, QuatSample } from './quaternionInterp'
-import { getDataFieldValue } from './dataFields'
+import { getDataFieldValue, clampOpacity } from './dataFields'
 import { disposeObject3D, removeAndDispose } from './threeDispose'
 
 interface Props extends PanelProps<Attitude3DOptions> {}
@@ -30,6 +30,13 @@ const getStyles = () => {
       bottom: 0;
       left: 0;
       padding: 10px;
+    `,
+    resetCameraButton: css`
+      position: absolute;
+      top: 4px;
+      right: 4px;
+      background: rgba(0, 0, 0, 0.35);
+      border-radius: 4px;
     `,
   }
 }
@@ -119,6 +126,54 @@ const parseColor = (color: string): {color: THREE.Color, transparency: boolean} 
 
 const ZERO_VEC = new THREE.Vector3(0, 0, 0)
 
+// Clone each mesh's material once, right after a model is created, so opacity can be
+// applied per-object without leaking into other meshes/objects that might reference the
+// same shared material instance.
+const prepareMaterialsForOpacity = (root: THREE.Object3D): void => {
+  const cloneWithBase = (material: THREE.Material): THREE.Material => {
+    const cloned = material.clone()
+    cloned.userData.baseOpacity = material.opacity
+    cloned.userData.baseTransparent = material.transparent
+    return cloned
+  }
+
+  root.traverse(child => {
+    if (!(child instanceof THREE.Mesh) || !child.material) { return }
+    child.material = Array.isArray(child.material)
+      ? child.material.map(cloneWithBase)
+      : cloneWithBase(child.material)
+  })
+}
+
+// Apply an object's opacity (0-1) on top of each material's original authored opacity, so a
+// fully-opaque object opacity (1) never changes an already-translucent material.
+const applyOpacityTo = (root: THREE.Object3D, opacity: number): void => {
+  const applyToMaterial = (material: THREE.Material & { opacity: number; transparent: boolean; depthWrite: boolean }) => {
+    const baseOpacity = material.userData?.baseOpacity ?? material.opacity ?? 1
+    const baseTransparent = material.userData?.baseTransparent ?? material.transparent ?? false
+    const effectiveOpacity = baseOpacity * opacity
+    const wasTransparent = material.transparent
+
+    material.opacity = effectiveOpacity
+    material.transparent = baseTransparent || effectiveOpacity < 1
+    material.depthWrite = effectiveOpacity >= 1
+
+    if (material.transparent !== wasTransparent) {
+      material.needsUpdate = true
+    }
+  }
+
+  root.traverse(child => {
+    if (!(child instanceof THREE.Mesh) || !child.material) { return }
+    if (Array.isArray(child.material)) {
+      child.material.forEach(m => applyToMaterial(m as any))
+    }
+    else {
+      applyToMaterial(child.material as any)
+    }
+  })
+}
+
 type ObjectEntry = {
   id: string
   root: THREE.Group
@@ -127,6 +182,7 @@ type ObjectEntry = {
   sphereCenter: THREE.Vector3 | null  // bounding sphere center, in the model's own local space
   baseRadius: number                  // bounding sphere radius before scale is applied
   scale: number
+  opacity: number                     // currently applied opacity (0-1), resolved from data
   uri: string                         // resolved URI currently loaded
   modelCenter: 'origin' | 'sphere' | 'average'
   loadToken: number
@@ -405,6 +461,8 @@ export const Attitude3DPanel: React.FC<Props> = ({ options, data, width, height 
     entry.model = obj
 
     applyCenter(entry)
+    prepareMaterialsForOpacity(obj)
+    applyOpacityTo(obj, entry.opacity)
 
     entry.root.add(obj)
   }
@@ -428,6 +486,8 @@ export const Attitude3DPanel: React.FC<Props> = ({ options, data, width, height 
     entry.model = group
 
     applyCenter(entry)
+    prepareMaterialsForOpacity(group)
+    applyOpacityTo(group, entry.opacity)
 
     entry.root.add(group)
   }
@@ -617,6 +677,7 @@ export const Attitude3DPanel: React.FC<Props> = ({ options, data, width, height 
           sphereCenter: null,
           baseRadius: 1e-7,
           scale: o.scale,
+          opacity: 1, // resolved to the real value by the data effect right after creation
           uri: '',
           modelCenter: o.modelCenter,
           loadToken: 0,
@@ -679,6 +740,12 @@ export const Attitude3DPanel: React.FC<Props> = ({ options, data, width, height 
           entry.root.quaternion.copy(q)
         }
       }
+
+      const opacity = clampOpacity(evalDataField(o.opacity, 1))
+      if (opacity !== entry.opacity) {
+        entry.opacity = opacity
+        if (entry.model) { applyOpacityTo(entry.model, opacity) }
+      }
     })
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [data, options.objects])
@@ -737,11 +804,13 @@ export const Attitude3DPanel: React.FC<Props> = ({ options, data, width, height 
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [data, interpHash])
 
-  // Camera Direction / Target
-  useEffect(() => {
+  // Places the camera at its configured default position/orientation relative to the current
+  // camera target. Shared by the camera-direction effect and the manual reset button so both
+  // stay in sync.
+  const resetCamera = () => {
     if (!camera.current) { return }
 
-    const targetEntry = objectsRef.current.get(options.cameraTargetId ?? ORIGIN_TARGET_ID)
+    const targetEntry = objectsRef.current.get(cameraTargetIdRef.current)
     const center = targetEntry ? targetEntry.root.position : new THREE.Vector3(0, 0, 0)
     const baseRadius = targetEntry ? effRadius(targetEntry) : encompassingRadius(objectsRef.current)
 
@@ -773,6 +842,11 @@ export const Attitude3DPanel: React.FC<Props> = ({ options, data, width, height 
       controls.current.minDistance = baseRadius * 0.1
       controls.current.update()
     }
+  }
+
+  // Camera Direction / Target
+  useEffect(() => {
+    resetCamera()
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [cameraDirectionX, cameraDirectionY, cameraDirectionZ, options.cameraDistance, options.cameraTargetId, sceneVersion])
 
@@ -849,25 +923,10 @@ export const Attitude3DPanel: React.FC<Props> = ({ options, data, width, height 
       if (!controls.current) { return }
       controls.current.dispose()
       controls.current = null
-
-      let distance = baseRadius * parseFloat(options.cameraDistance)
-      if (!Number.isFinite(distance) || distance <= 0) {
-        distance = baseRadius * 2
-      }
-
-      const vec = new THREE.Vector3(
-        - cameraDirectionX,
-        - cameraDirectionY,
-        - cameraDirectionZ,
-      )
-      if (vec.lengthSq() === 0) { vec.set(0, 0, 1) }
-      vec.normalize()
-      vec.multiplyScalar(distance)
-      camera.current.position.set(center.x + vec.x, center.y + vec.y, center.z + vec.z)
-      camera.current.lookAt(center)
-      lastTargetPos.current.copy(center)
+      resetCamera()
     }
-  }, [options.mouseControl]) // eslint-disable-line react-hooks/exhaustive-deps
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [options.mouseControl])
 
   return (
     <div
@@ -881,6 +940,14 @@ export const Attitude3DPanel: React.FC<Props> = ({ options, data, width, height 
 			ref={frame}
     >
       <canvas ref={canvas} style={{width:'100%', height:'100%'}} />
+      <div className={styles.resetCameraButton}>
+        <IconButton
+          name="camera"
+          tooltip="Reset camera to default position"
+          aria-label="Reset camera to default position"
+          onClick={resetCamera}
+        />
+      </div>
     </div>
   );
 };

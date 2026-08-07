@@ -1,5 +1,6 @@
 import { DataFrame, Field, FieldType } from '@grafana/data'
 import {
+  clampOpacity,
   getDataFieldValue,
   getLastFieldValue,
   getNumericFieldOptions,
@@ -146,6 +147,25 @@ describe('getDataFieldValue', () => {
     const frames = [makeFrame('A', [{ name: 'q_x', type: FieldType.number, values: [1] }])]
     const df = createDataField('A.missing', 'field')
     expect(getDataFieldValue(frames, df, 99)).toBe(99)
+  })
+})
+
+describe('clampOpacity', () => {
+  it('passes values already within 0-1 through unchanged', () => {
+    expect(clampOpacity(0)).toBe(0)
+    expect(clampOpacity(0.5)).toBe(0.5)
+    expect(clampOpacity(1)).toBe(1)
+  })
+
+  it('saturates values above 1 to 1 and below 0 to 0', () => {
+    expect(clampOpacity(2)).toBe(1)
+    expect(clampOpacity(-1)).toBe(0)
+  })
+
+  it('falls back to fully opaque (1) for non-finite values', () => {
+    expect(clampOpacity(NaN)).toBe(1)
+    expect(clampOpacity(Infinity)).toBe(1)
+    expect(clampOpacity(-Infinity)).toBe(1)
   })
 })
 

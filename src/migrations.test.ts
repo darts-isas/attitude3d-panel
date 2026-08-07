@@ -105,6 +105,14 @@ describe('migrateOptions', () => {
     expect(result.cameraTargetId).toBe(ORIGIN_TARGET_ID)
   })
 
+  it('defaults the migrated object to fully opaque', () => {
+    const result = migrateOptions({
+      modelRotationType: 'input',
+    })
+
+    expect(result.objects[0].opacity).toEqual({ sourceType: 'const', value: '1' })
+  })
+
   it('strips legacy keys from the migrated result', () => {
     const result = migrateOptions({
       modelURI: 'https://example.com/model.glb',

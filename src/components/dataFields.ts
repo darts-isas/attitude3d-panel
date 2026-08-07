@@ -62,6 +62,13 @@ export const getLastFieldValue = (field: Field): number | undefined => {
   return value
 }
 
+// Opacity is always displayed in the 0-1 range: values above 1 saturate to fully opaque,
+// values below 0 saturate to fully invisible, non-finite values fall back to opaque.
+export const clampOpacity = (value: number): number => {
+  if (!Number.isFinite(value)) { return 1 }
+  return Math.min(1, Math.max(0, value))
+}
+
 export const getDataFieldValue = (
   series: DataFrame[] | undefined | null,
   df: DataField | undefined,

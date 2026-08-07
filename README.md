@@ -79,14 +79,15 @@ Each model has the following settings:
 - **Model URL**: URL or template-variable path to a GLB, GLTF, or OBJ asset. The hosting server must respond to CORS preflight requests.
 - **Center**: Realign the asset using its *Origin*, its bounding *Sphere* center, or the *Average* of its vertices.
 - **Scale**: Scale factor applied to the model.
+- **Opacity**: How see-through the model is, from `0` (fully transparent) to `1` (fully opaque). Default: `1`.
 - **Position X / Y / Z**: Position of the model in world coordinates.
 - **Quaternion X / Y / Z / W**: Orientation applied to the model.
 - **Interpolation**: See [Quaternion Interpolation](#quaternion-interpolation).
 
-Position X/Y/Z and Quaternion X/Y/Z/W each choose their own source:
+Position X/Y/Z, Quaternion X/Y/Z/W, and Opacity each choose their own source:
 
 - **Const**: A fixed numeric value.
-- **Field**: A value read from a query field, taking the latest row. The field can be given either as `Series.Field` (for example `A.q_x`) or as a bare field name (`q_x`). When more than one query returns a field of the same name, use the `Series.Field` form to disambiguate.
+- **Field**: A value read from a query field, taking the latest row. The field can be given either as `Series.Field` (for example `A.q_x`) or as a bare field name (`q_x`). When more than one query returns a field of the same name, use the `Series.Field` form to disambiguate. For Opacity, values above `1` saturate to fully opaque and values below `0` saturate to fully transparent; opacity is applied on top of the model's own authored transparency, so a model that is already partially transparent in its source file is not made fully opaque by setting Opacity to `1`.
 
 ## Quaternion Interpolation
 
