@@ -105,12 +105,12 @@ describe('migrateOptions', () => {
     expect(result.cameraTargetId).toBe(ORIGIN_TARGET_ID)
   })
 
-  it('defaults the migrated object to fully opaque', () => {
+  it('defaults the migrated object to unchanged brightness', () => {
     const result = migrateOptions({
       modelRotationType: 'input',
     })
 
-    expect(result.objects[0].opacity).toEqual({ sourceType: 'const', value: '1' })
+    expect(result.objects[0].brightness).toEqual({ sourceType: 'const', value: '1' })
   })
 
   it('strips legacy keys from the migrated result', () => {

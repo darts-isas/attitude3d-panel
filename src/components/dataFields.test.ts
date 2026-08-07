@@ -1,6 +1,6 @@
 import { DataFrame, Field, FieldType } from '@grafana/data'
 import {
-  clampOpacity,
+  clampBrightness,
   getDataFieldValue,
   getLastFieldValue,
   getNumericFieldOptions,
@@ -150,22 +150,22 @@ describe('getDataFieldValue', () => {
   })
 })
 
-describe('clampOpacity', () => {
+describe('clampBrightness', () => {
   it('passes values already within 0-1 through unchanged', () => {
-    expect(clampOpacity(0)).toBe(0)
-    expect(clampOpacity(0.5)).toBe(0.5)
-    expect(clampOpacity(1)).toBe(1)
+    expect(clampBrightness(0)).toBe(0)
+    expect(clampBrightness(0.5)).toBe(0.5)
+    expect(clampBrightness(1)).toBe(1)
   })
 
   it('saturates values above 1 to 1 and below 0 to 0', () => {
-    expect(clampOpacity(2)).toBe(1)
-    expect(clampOpacity(-1)).toBe(0)
+    expect(clampBrightness(2)).toBe(1)
+    expect(clampBrightness(-1)).toBe(0)
   })
 
-  it('falls back to fully opaque (1) for non-finite values', () => {
-    expect(clampOpacity(NaN)).toBe(1)
-    expect(clampOpacity(Infinity)).toBe(1)
-    expect(clampOpacity(-Infinity)).toBe(1)
+  it('falls back to unchanged (1) for non-finite values', () => {
+    expect(clampBrightness(NaN)).toBe(1)
+    expect(clampBrightness(Infinity)).toBe(1)
+    expect(clampBrightness(-Infinity)).toBe(1)
   })
 })
 

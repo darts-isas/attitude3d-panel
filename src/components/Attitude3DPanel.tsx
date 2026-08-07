@@ -9,7 +9,7 @@ import { OrbitControls } from 'three-stdlib'
 import { GLTFLoader } from 'three/examples/jsm/loaders/GLTFLoader'
 import { OBJLoader } from 'three/examples/jsm/loaders/OBJLoader'
 import { collectQuatSamples, sampleQuaternionAt, slerpPair, QuatSample } from './quaternionInterp'
-import { getDataFieldValue, clampOpacity } from './dataFields'
+import { getDataFieldValue, clampBrightness } from './dataFields'
 import { disposeObject3D, removeAndDispose } from './threeDispose'
 
 interface Props extends PanelProps<Attitude3DOptions> {}
@@ -126,14 +126,19 @@ const parseColor = (color: string): {color: THREE.Color, transparency: boolean} 
 
 const ZERO_VEC = new THREE.Vector3(0, 0, 0)
 
-// Clone each mesh's material once, right after a model is created, so opacity can be
+// Clone each mesh's material once, right after a model is created, so brightness can be
 // applied per-object without leaking into other meshes/objects that might reference the
 // same shared material instance.
-const prepareMaterialsForOpacity = (root: THREE.Object3D): void => {
+const prepareMaterialsForBrightness = (root: THREE.Object3D): void => {
   const cloneWithBase = (material: THREE.Material): THREE.Material => {
     const cloned = material.clone()
-    cloned.userData.baseOpacity = material.opacity
-    cloned.userData.baseTransparent = material.transparent
+    const m = cloned as any
+    if (m.color instanceof THREE.Color) {
+      cloned.userData.baseColor = m.color.clone()
+    }
+    if (m.emissive instanceof THREE.Color) {
+      cloned.userData.baseEmissive = m.emissive.clone()
+    }
     return cloned
   }
 
@@ -145,31 +150,29 @@ const prepareMaterialsForOpacity = (root: THREE.Object3D): void => {
   })
 }
 
-// Apply an object's opacity (0-1) on top of each material's original authored opacity, so a
-// fully-opaque object opacity (1) never changes an already-translucent material.
-const applyOpacityTo = (root: THREE.Object3D, opacity: number): void => {
-  const applyToMaterial = (material: THREE.Material & { opacity: number; transparent: boolean; depthWrite: boolean }) => {
-    const baseOpacity = material.userData?.baseOpacity ?? material.opacity ?? 1
-    const baseTransparent = material.userData?.baseTransparent ?? material.transparent ?? false
-    const effectiveOpacity = baseOpacity * opacity
-    const wasTransparent = material.transparent
-
-    material.opacity = effectiveOpacity
-    material.transparent = baseTransparent || effectiveOpacity < 1
-    material.depthWrite = effectiveOpacity >= 1
-
-    if (material.transparent !== wasTransparent) {
-      material.needsUpdate = true
+// Darken an object's materials by multiplying their authored diffuse/emissive color toward
+// black. Never touches opacity/transparent/depthWrite, so the object stays fully opaque
+// (still correctly occludes other objects) and only appears dimmer under the same lighting.
+const applyBrightnessTo = (root: THREE.Object3D, brightness: number): void => {
+  const applyToMaterial = (material: THREE.Material) => {
+    const m = material as any
+    const baseColor: THREE.Color | undefined = material.userData?.baseColor
+    if (baseColor && m.color instanceof THREE.Color) {
+      m.color.copy(baseColor).multiplyScalar(brightness)
+    }
+    const baseEmissive: THREE.Color | undefined = material.userData?.baseEmissive
+    if (baseEmissive && m.emissive instanceof THREE.Color) {
+      m.emissive.copy(baseEmissive).multiplyScalar(brightness)
     }
   }
 
   root.traverse(child => {
     if (!(child instanceof THREE.Mesh) || !child.material) { return }
     if (Array.isArray(child.material)) {
-      child.material.forEach(m => applyToMaterial(m as any))
+      child.material.forEach(m => applyToMaterial(m))
     }
     else {
-      applyToMaterial(child.material as any)
+      applyToMaterial(child.material)
     }
   })
 }
@@ -182,7 +185,7 @@ type ObjectEntry = {
   sphereCenter: THREE.Vector3 | null  // bounding sphere center, in the model's own local space
   baseRadius: number                  // bounding sphere radius before scale is applied
   scale: number
-  opacity: number                     // currently applied opacity (0-1), resolved from data
+  brightness: number                  // currently applied brightness (0-1), resolved from data
   uri: string                         // resolved URI currently loaded
   modelCenter: 'origin' | 'sphere' | 'average'
   loadToken: number
@@ -461,8 +464,8 @@ export const Attitude3DPanel: React.FC<Props> = ({ options, data, width, height 
     entry.model = obj
 
     applyCenter(entry)
-    prepareMaterialsForOpacity(obj)
-    applyOpacityTo(obj, entry.opacity)
+    prepareMaterialsForBrightness(obj)
+    applyBrightnessTo(obj, entry.brightness)
 
     entry.root.add(obj)
   }
@@ -486,8 +489,8 @@ export const Attitude3DPanel: React.FC<Props> = ({ options, data, width, height 
     entry.model = group
 
     applyCenter(entry)
-    prepareMaterialsForOpacity(group)
-    applyOpacityTo(group, entry.opacity)
+    prepareMaterialsForBrightness(group)
+    applyBrightnessTo(group, entry.brightness)
 
     entry.root.add(group)
   }
@@ -677,7 +680,7 @@ export const Attitude3DPanel: React.FC<Props> = ({ options, data, width, height 
           sphereCenter: null,
           baseRadius: 1e-7,
           scale: o.scale,
-          opacity: 1, // resolved to the real value by the data effect right after creation
+          brightness: 1, // resolved to the real value by the data effect right after creation
           uri: '',
           modelCenter: o.modelCenter,
           loadToken: 0,
@@ -741,10 +744,10 @@ export const Attitude3DPanel: React.FC<Props> = ({ options, data, width, height 
         }
       }
 
-      const opacity = clampOpacity(evalDataField(o.opacity, 1))
-      if (opacity !== entry.opacity) {
-        entry.opacity = opacity
-        if (entry.model) { applyOpacityTo(entry.model, opacity) }
+      const brightness = clampBrightness(evalDataField(o.brightness, 1))
+      if (brightness !== entry.brightness) {
+        entry.brightness = brightness
+        if (entry.model) { applyBrightnessTo(entry.model, brightness) }
       }
     })
     // eslint-disable-next-line react-hooks/exhaustive-deps

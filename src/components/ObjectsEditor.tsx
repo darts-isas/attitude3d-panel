@@ -260,12 +260,12 @@ export const ObjectsEditor = ({ value, onChange, context }: StandardEditorProps<
           </Field>
 
           <DataFieldEditor
-            label="Opacity"
-            value={selected.opacity ?? createDataField('1')}
-            onChange={(opacity: DataField) => updateObject(selectedIndex, { opacity })}
+            label="Brightness"
+            value={selected.brightness ?? createDataField('1')}
+            onChange={(brightness: DataField) => updateObject(selectedIndex, { brightness })}
             data={context.data}
             fieldKind="number"
-            placeholder="0-1 (1 = opaque)"
+            placeholder="0-1 (1 = unchanged)"
           />
 
           <div className={styles.sectionTitle}>Position</div>
