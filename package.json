@@ -69,14 +69,5 @@
     "three-stdlib": "^2.36.1",
     "tslib": "2.8.1"
   },
-  "packageManager": "pnpm@10.8.0",
-  "pnpm": {
-    "overrides": {
-      "prismjs": ">=1.30.0",
-      "react-router": ">=6.30.2",
-      "@remix-run/router": ">=1.23.2",
-      "diff": ">=8.0.3",
-      "eslint": "8.57.1"
-    }
-  }
+  "packageManager": "pnpm@10.8.0"
 }

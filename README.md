@@ -14,6 +14,7 @@ Render WebGL-based 3D models directly inside Grafana dashboards. The panel is id
 - Keep models moving smoothly between refreshes with per-model **quaternion interpolation / extrapolation**.
 - Combine directional and ambient lighting to match the conditions your model represents.
 - Align each model's pivot, and toggle helper axes and background to keep orientation easy to understand.
+- Overlay a **key parameters** text readout on top of the 3D view, showing any number of data field values in a fixed-size box.
 
 Dashboards built with the earlier single-model version are **migrated automatically** — see [Migration](#migration).
 
@@ -34,6 +35,7 @@ Dashboards built with the earlier single-model version are **migrated automatica
 - **Smooth out the motion**: Enable per-model interpolation to keep the attitude advancing between dashboard refreshes.
 - **Shape the lighting**: Adjust directional light vectors, colors, and intensity, then blend in ambient light for shadow fill.
 - **Expose helpers and controls**: Toggle helper axes during debugging and enable mouse control for interactive reviews.
+- **Show key parameters**: Press *Add Key Parameter* under **Key Parameters** to overlay data field values on top of the model.
 
 ## Panel Options
 
@@ -88,6 +90,28 @@ Position X/Y/Z, Quaternion X/Y/Z/W, and Brightness each choose their own source:
 
 - **Const**: A fixed numeric value.
 - **Field**: A value read from a query field, taking the latest row. The field can be given either as `Series.Field` (for example `A.q_x`) or as a bare field name (`q_x`). When more than one query returns a field of the same name, use the `Series.Field` form to disambiguate. For Brightness, values above `1` saturate to `1` and values below `0` saturate to `0`; brightness is applied on top of the model's own authored materials (only its color darkens), so a model that is already partially transparent in its source file keeps that translucency unchanged.
+
+### Key Parameters
+
+Overlays a fixed-format text list of data field values on top of the 3D view. The box's size depends only on the item count, names, and *Value Width* — never on the values themselves, so it never resizes as data changes.
+
+- **Font Size**: Font size of the overlay text, in pixels.
+- **Vertical Position** / **Horizontal Position**: Which edge and side the overlay is anchored to — `Top`/`Bottom` and `Left`/`Right`, combining into one of the four corners. Default: `Top` / `Left`.
+- **Separator**: Text placed between each parameter's name and value — `:`, `=`, or a plain space.
+- **Value Width**: Fixed width of the value column, in characters. Values shorter than this are right-padded with spaces; longer ones are truncated from the right, so the column width never changes.
+- **Text Color**: Color of the overlay text.
+- **Background**: Show a background behind the overlay text. Default: on, neutral gray at `0.25` opacity.
+- **Background Color** / **Background Opacity**: Color and opacity (`0`-`1`) of the background, shown when *Background* is on.
+- **Shape**: Corner style of the background/border — `Rectangle` or `Rounded`.
+- **Border**: Show a border around the overlay. Default: on.
+- **Border Color**: Color of the border, shown when *Border* is on.
+- **Add Key Parameter**: Add a new value to the overlay. The list below shows every parameter; select one to edit it, use the eye icon to hide it, the arrows to reorder, and the trash icon to remove it.
+
+Each key parameter has the following settings:
+
+- **Name**: Display name, shown in the name column.
+- **Data Field**: The field whose latest value is displayed, given either as `Series.Field` (for example `A.mode`) or as a bare field name (`mode`). Unlike Position/Quaternion/Brightness fields, this accepts fields of any type (numeric, string, time, boolean, ...), not just numeric ones.
+- **Format**: A single `printf`-style specifier plus any literal text, applied to the field's latest value — for example `%.2f`, `%.2f deg`, `%s`, `%d`, or `%+.1e`. Only the first specifier in the string is substituted with the value; anything else is shown as-is. When the field can't be resolved, `-` is shown instead of a value.
 
 ## Quaternion Interpolation
 

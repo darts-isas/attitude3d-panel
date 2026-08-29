@@ -62,6 +62,15 @@ export const getLastFieldValue = (field: Field): number | undefined => {
   return value
 }
 
+// Unlike getLastFieldValue, this returns the raw last value untouched — needed for string
+// fields (e.g. a mode name), where coercing through Number() would discard the value.
+export const getLastRawFieldValue = (field: Field): unknown => {
+  const values = field.values
+  if (!values || values.length === 0) { return undefined }
+
+  return values[values.length - 1]
+}
+
 // Brightness is always displayed in the 0-1 range: values above 1 saturate to fully bright
 // (unchanged), values below 0 saturate to fully black, non-finite values fall back to
 // unchanged.
@@ -89,9 +98,10 @@ export const getDataFieldValue = (
   return value !== undefined ? value : fallback
 }
 
+// fieldType omitted means "any type" — used by getAllFieldOptions below.
 const getFieldOptionsByType = (
   series: DataFrame[] | undefined | null,
-  fieldType: FieldType,
+  fieldType?: FieldType,
 ): Array<SelectableValue<string>> => {
   if (!series) { return [] }
 
@@ -101,7 +111,7 @@ const getFieldOptionsByType = (
   series.forEach((frame, index) => {
     const label = frameLabel(frame, index)
     frame.fields.forEach(field => {
-      if (field.type !== fieldType) { return }
+      if (fieldType !== undefined && field.type !== fieldType) { return }
 
       const value = `${label}.${field.name}`
       if (seen.has(value)) { return }
@@ -120,4 +130,10 @@ export const getNumericFieldOptions = (series: DataFrame[] | undefined | null): 
 
 export const getTimeFieldOptions = (series: DataFrame[] | undefined | null): Array<SelectableValue<string>> => {
   return getFieldOptionsByType(series, FieldType.time)
+}
+
+// Used by the Key Parameters editor, where the displayed value can come from a field of
+// any type (numeric, string, time, boolean, ...).
+export const getAllFieldOptions = (series: DataFrame[] | undefined | null): Array<SelectableValue<string>> => {
+  return getFieldOptionsByType(series)
 }

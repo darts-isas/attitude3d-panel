@@ -223,4 +223,20 @@ describe('migrateOptions', () => {
     const result = migrateOptions(null)
     expect(result.objects).toEqual([])
   })
+
+  it('leaves a pre-Key-Parameters panel JSON untouched, without injecting the new keys', () => {
+    // Regression test: dashboards saved before the Key Parameters feature was added have
+    // none of the keyParam* keys. The migration handler must not require or inject them —
+    // that is the panel-options builder's defaultValue's job, not the migration's.
+    const legacy = {
+      objects: [{ id: 'a', name: 'A' }],
+      cameraTargetId: 'a',
+      backgroundColor: '#000000',
+    } as unknown as Record<string, unknown>
+
+    const result = migrateOptions(legacy) as unknown as Record<string, unknown>
+
+    expect(result).toEqual(legacy)
+    expect(result.keyParams).toBeUndefined()
+  })
 })

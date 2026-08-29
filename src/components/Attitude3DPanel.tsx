@@ -11,6 +11,8 @@ import { OBJLoader } from 'three/examples/jsm/loaders/OBJLoader'
 import { collectQuatSamples, sampleQuaternionAt, slerpPair, QuatSample } from './quaternionInterp'
 import { getDataFieldValue, clampBrightness } from './dataFields'
 import { disposeObject3D, removeAndDispose } from './threeDispose'
+import { ColorTable } from './colorTable'
+import { KeyParamsOverlay } from './KeyParamsOverlay'
 
 interface Props extends PanelProps<Attitude3DOptions> {}
 
@@ -39,39 +41,6 @@ const getStyles = () => {
       border-radius: 4px;
     `,
   }
-}
-
-const ColorTable: {[key: string]: string} = {
-  'dark-red'          : 'rgb(196, 22, 42)',
-  'semi-dark-red'     : 'rgb(224, 47, 68)',
-  'red'               : 'rgb(242, 73, 92)',
-  'light-red'         : 'rgb(255, 115, 131)',
-  'super-light-red'   : 'rgb(255, 166, 176)',
-  'dark-orange'       : 'rgb(250, 100, 0)',
-  'semi-dark-orange'  : 'rgb(255, 120, 10)',
-  'orange'            : 'rgb(255, 152, 48)',
-  'light-orange'      : 'rgb(255, 179, 87)',
-  'super-light-orange': 'rgb(255, 203, 125)',
-  'dark-yellow'       : 'rgb(224, 180, 0)',
-  'semi-dark-yellow'  : 'rgb(242, 204, 12)',
-  'yellow'            : 'rgb(250, 222, 42)',
-  'light-yellow'      : 'rgb(255, 238, 82)',
-  'super-light-yellow': 'rgb(255, 248, 153)',
-  'dark-green'        : 'rgb(55, 135, 45)',
-  'semi-dark-green'   : 'rgb(86, 166, 75)',
-  'green'             : 'rgb(115, 191, 105)',
-  'light-green'       : 'rgb(150, 217, 141)',
-  'super-light-green' : 'rgb(200, 242, 194)',
-  'dark-blue'         : 'rgb(31, 96, 196)',
-  'semi-dark-blue'    : 'rgb(50, 116, 217)',
-  'blue'              : 'rgb(87, 148, 242)',
-  'light-blue'        : 'rgb(138, 184, 255)',
-  'super-light-blue'  : 'rgb(192, 216, 255)',
-  'dark-purple'       : 'rgb(143, 59, 184)',
-  'semi-dark-purple'  : 'rgb(163, 82, 204)',
-  'purple'            : 'rgb(184, 119, 217)',
-  'light-purple'      : 'rgb(202, 149, 229)',
-  'super-light-purple': 'rgb(222, 182, 242)',
 }
 
 const parseColor = (color: string): {color: THREE.Color, transparency: boolean} => {
@@ -943,6 +912,11 @@ export const Attitude3DPanel: React.FC<Props> = ({ options, data, width, height 
 			ref={frame}
     >
       <canvas ref={canvas} style={{width:'100%', height:'100%'}} />
+      <KeyParamsOverlay
+        keyParams={Array.isArray(options.keyParams) ? options.keyParams : []}
+        series={data.series}
+        options={options}
+      />
       <div className={styles.resetCameraButton}>
         <IconButton
           name="camera"
