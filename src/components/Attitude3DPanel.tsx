@@ -1,8 +1,8 @@
 import React, { useEffect, useRef, useState } from 'react'
 import { LoadingState, PanelProps } from '@grafana/data'
-import { Attitude3DOptions, DataField, ModelObject, ORIGIN_TARGET_ID } from 'types'
+import { Attitude3DOptions, DataField, ModelObject, ORIGIN_TARGET_ID, VectorObject } from 'types'
 import { css, cx } from '@emotion/css'
-import { IconButton, useStyles2, /*useTheme2*/ } from '@grafana/ui'
+import { useStyles2, /*useTheme2*/ } from '@grafana/ui'
 import { getTemplateSrv } from '@grafana/runtime'
 import * as THREE from 'three'
 import { OrbitControls } from 'three-stdlib'
@@ -11,8 +11,10 @@ import { OBJLoader } from 'three/examples/jsm/loaders/OBJLoader'
 import { collectQuatSamples, sampleQuaternionAt, slerpPair, QuatSample } from './quaternionInterp'
 import { getDataFieldValue, clampBrightness } from './dataFields'
 import { disposeObject3D, removeAndDispose } from './threeDispose'
+import { computeVectorShape } from './vectorGeometry'
 import { ColorTable } from './colorTable'
 import { KeyParamsOverlay } from './KeyParamsOverlay'
+import { SceneControls } from './SceneControls'
 
 interface Props extends PanelProps<Attitude3DOptions> {}
 
@@ -32,13 +34,6 @@ const getStyles = () => {
       bottom: 0;
       left: 0;
       padding: 10px;
-    `,
-    resetCameraButton: css`
-      position: absolute;
-      top: 4px;
-      right: 4px;
-      background: rgba(0, 0, 0, 0.35);
-      border-radius: 4px;
     `,
   }
 }
@@ -94,6 +89,7 @@ const parseColor = (color: string): {color: THREE.Color, transparency: boolean} 
 }
 
 const ZERO_VEC = new THREE.Vector3(0, 0, 0)
+const UP = new THREE.Vector3(0, 1, 0)
 
 // Clone each mesh's material once, right after a model is created, so brightness can be
 // applied per-object without leaking into other meshes/objects that might reference the
@@ -178,16 +174,40 @@ const isInterpActive = (o: ModelObject): boolean =>
   o.quatX?.sourceType === 'field' && o.quatY?.sourceType === 'field' &&
   o.quatZ?.sourceType === 'field' && o.quatW?.sourceType === 'field'
 
-// Radius of a sphere centered at the origin that contains every object's root position
-// plus its own effective radius. Used for the AxesHelper size and as the camera's
-// fallback framing radius when the target is the origin (or a deleted object).
-const encompassingRadius = (entries: Map<string, ObjectEntry>): number => {
+type VectorEntry = {
+  id: string
+  root: THREE.Group        // world-positioned at the drawn segment's origin; visibility
+                           // driven by the overlay's global "show vectors" toggle
+  arrow: THREE.Group       // holds shaft+head; visibility driven by the shape's own validity
+  shaft: THREE.Mesh
+  head: THREE.Mesh
+  material: THREE.MeshBasicMaterial
+  color: string            // currently applied option string, to diff against
+  extent: number           // 0 when the shape is invisible; else distance-from-origin to the
+                           // arrow's tip, folded into encompassingRadius for camera framing
+}
+
+// Radius of a sphere centered at the origin that contains every model's root position plus
+// its own effective radius, and every visible vector's full extent from the world origin.
+// Used for the AxesHelper size and as the camera's fallback framing radius when the target
+// is the origin (or a deleted object).
+const encompassingRadius = (objects: Map<string, ObjectEntry>, vectors: Map<string, VectorEntry>): number => {
   let max = 0
-  entries.forEach(entry => {
+  let any = false
+
+  objects.forEach(entry => {
+    any = true
     const r = entry.root.position.length() + effRadius(entry)
     if (r > max) { max = r }
   })
-  return entries.size === 0 ? 1 : max
+
+  vectors.forEach(entry => {
+    if (entry.extent <= 0) { return }
+    any = true
+    if (entry.extent > max) { max = entry.extent }
+  })
+
+  return any ? max : 1
 }
 
 export const Attitude3DPanel: React.FC<Props> = ({ options, data, width, height }) => {
@@ -210,8 +230,14 @@ export const Attitude3DPanel: React.FC<Props> = ({ options, data, width, height 
 
   const [sceneVersion, setSceneVersion] = useState(0)
 
+  // Ephemeral overlay toggles (not persisted to panel options) — see SceneControls.
+  const [showGeometry, setShowGeometry] = useState(true)
+  const [showVectors, setShowVectors] = useState(true)
+
   // Object registry, keyed by ModelObject.id.
   const objectsRef = useRef<Map<string, ObjectEntry>>(new Map())
+  // Vector (arrow) registry, keyed by VectorObject.id.
+  const vectorsRef = useRef<Map<string, VectorEntry>>(new Map())
 
   // Per-object interpolation config and the camera-target id, refreshed every render so
   // the rAF loop (a closure created once in initRenderer) always sees the latest values.
@@ -258,6 +284,7 @@ export const Attitude3DPanel: React.FC<Props> = ({ options, data, width, height 
   cameraTargetIdRef.current = options.cameraTargetId ?? ORIGIN_TARGET_ID
 
   const objectList = Array.isArray(options.objects) ? options.objects : []
+  const vectorList = Array.isArray(options.vectors) ? options.vectors : []
   const resolvedObjects = objectList.map(o => ({ ...o, resolvedURI: tmplSrv.replace(o.modelURI ?? '') }))
   const sceneHash = JSON.stringify(
     resolvedObjects.filter(o => o.visible !== false)
@@ -555,9 +582,11 @@ export const Attitude3DPanel: React.FC<Props> = ({ options, data, width, height 
 	useEffect(() => {
     initRenderer()
 
-    // Captured once: objectsRef.current is the same Map instance for the component's
-    // whole lifetime (only ever mutated in place), so this is safe to use in cleanup.
+    // Captured once: objectsRef.current/vectorsRef.current are the same Map instances for
+    // the component's whole lifetime (only ever mutated in place), so this is safe to use
+    // in cleanup.
     const objects = objectsRef.current
+    const vectors = vectorsRef.current
 
     return () => {
       cancelAnimationFrame(rafId.current)
@@ -567,6 +596,12 @@ export const Attitude3DPanel: React.FC<Props> = ({ options, data, width, height 
         disposeObject3D(entry.root)
       })
       objects.clear()
+
+      vectors.forEach(entry => {
+        scene.current?.remove(entry.root)
+        disposeObject3D(entry.root)
+      })
+      vectors.clear()
 
       if (axesHelper.current) {
         axesHelper.current.dispose()
@@ -776,6 +811,92 @@ export const Attitude3DPanel: React.FC<Props> = ({ options, data, width, height 
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [data, interpHash])
 
+  // Vectors: create/destroy VectorEntry instances and apply their shape/color/visibility
+  // from data, all in one effect. Unlike models, a vector's geometry is built synchronously
+  // (no network load), so there's no need to split "sync" from "data" the way models do —
+  // doing so here would only add ordering hazards (an entry sitting at identity transform
+  // for one frame after creation) for no benefit.
+  useEffect(() => {
+    if (!scene.current) { return }
+
+    const visibleVectors = vectorList.filter(v => v.visible !== false)
+    const wantedIds = new Set(visibleVectors.map(v => v.id))
+    let idsChanged = false
+
+    // Discard entries no longer wanted.
+    vectorsRef.current.forEach((entry, id) => {
+      if (wantedIds.has(id)) { return }
+
+      scene.current?.remove(entry.root)
+      disposeObject3D(entry.root)
+      vectorsRef.current.delete(id)
+      idsChanged = true
+    })
+
+    visibleVectors.forEach((v: VectorObject) => {
+      let entry = vectorsRef.current.get(v.id)
+
+      if (!entry) {
+        // Unit primitives, sized entirely via scale/position below — never rebuilt, so
+        // thickness/length changes never allocate new geometry. One geometry/material set
+        // per entry (not shared at module scope): disposeObject3D disposes whatever it finds
+        // under a removed entry's root, which would corrupt any sibling sharing the same
+        // buffers.
+        const root = new THREE.Group()
+        const arrow = new THREE.Group()
+        const material = new THREE.MeshBasicMaterial({ color: parseColor(v.color || '#ffffff').color })
+        const shaft = new THREE.Mesh(new THREE.CylinderGeometry(1, 1, 1, 16), material)
+        const head = new THREE.Mesh(new THREE.ConeGeometry(1, 1, 16), material)
+        arrow.add(shaft)
+        arrow.add(head)
+        root.add(arrow)
+        scene.current?.add(root)
+
+        entry = { id: v.id, root, arrow, shaft, head, material, color: v.color || '#ffffff', extent: 0 }
+        vectorsRef.current.set(v.id, entry)
+        idsChanged = true
+      }
+
+      const start = new THREE.Vector3(
+        evalDataField(v.startX, 0), evalDataField(v.startY, 0), evalDataField(v.startZ, 0),
+      )
+      const end = new THREE.Vector3(
+        evalDataField(v.endX, 1), evalDataField(v.endY, 1), evalDataField(v.endZ, 1),
+      )
+      const magnitude = evalDataField(v.magnitude, 1)
+      const truncate = evalDataField(v.truncate, 0)
+      const thickness = Number.isFinite(v.thickness) ? v.thickness : 0.02
+
+      const shape = computeVectorShape(start, end, magnitude, truncate, thickness)
+
+      entry.root.position.copy(shape.origin)
+      entry.root.visible = showVectors
+      entry.arrow.visible = shape.visible
+      entry.arrow.quaternion.setFromUnitVectors(UP, shape.direction)
+      entry.shaft.scale.set(shape.shaftRadius, shape.shaftLength, shape.shaftRadius)
+      entry.shaft.position.set(0, shape.shaftLength / 2, 0)
+      entry.head.scale.set(shape.headRadius, shape.headLength, shape.headRadius)
+      entry.head.position.set(0, shape.shaftLength + shape.headLength / 2, 0)
+      entry.extent = shape.visible ? shape.origin.length() + shape.shaftLength + shape.headLength : 0
+
+      const color = v.color || '#ffffff'
+      if (color !== entry.color) {
+        entry.color = color
+        entry.material.color.copy(parseColor(color).color)
+      }
+    })
+
+    if (idsChanged) { setSceneVersion(sv => sv + 1) }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [data, options.vectors, showVectors])
+
+  // Ephemeral overlay toggle: show/hide every model without touching each model's own
+  // per-object visibility. sceneVersion (not sceneHash) so this re-applies once a model
+  // that was still loading when the toggle last ran has finished and gained a root.
+  useEffect(() => {
+    objectsRef.current.forEach(entry => { entry.root.visible = showGeometry })
+  }, [showGeometry, sceneVersion])
+
   // Places the camera at its configured default position/orientation relative to the current
   // camera target. Shared by the camera-direction effect and the manual reset button so both
   // stay in sync.
@@ -784,7 +905,7 @@ export const Attitude3DPanel: React.FC<Props> = ({ options, data, width, height 
 
     const targetEntry = objectsRef.current.get(cameraTargetIdRef.current)
     const center = targetEntry ? targetEntry.root.position : new THREE.Vector3(0, 0, 0)
-    const baseRadius = targetEntry ? effRadius(targetEntry) : encompassingRadius(objectsRef.current)
+    const baseRadius = targetEntry ? effRadius(targetEntry) : encompassingRadius(objectsRef.current, vectorsRef.current)
 
     let distance = baseRadius * parseFloat(options.cameraDistance)
     if (!Number.isFinite(distance) || distance <= 0) {
@@ -863,7 +984,7 @@ export const Attitude3DPanel: React.FC<Props> = ({ options, data, width, height 
     }
 
     if (options.showHelper) {
-      axesHelper.current = new THREE.AxesHelper(encompassingRadius(objectsRef.current))
+      axesHelper.current = new THREE.AxesHelper(encompassingRadius(objectsRef.current, vectorsRef.current))
       scene.current.add(axesHelper.current)
     }
   }, [options.showHelper, sceneVersion])
@@ -874,7 +995,7 @@ export const Attitude3DPanel: React.FC<Props> = ({ options, data, width, height 
 
     const targetEntry = objectsRef.current.get(cameraTargetIdRef.current)
     const center = targetEntry ? targetEntry.root.position : new THREE.Vector3(0, 0, 0)
-    const baseRadius = targetEntry ? effRadius(targetEntry) : encompassingRadius(objectsRef.current)
+    const baseRadius = targetEntry ? effRadius(targetEntry) : encompassingRadius(objectsRef.current, vectorsRef.current)
 
     if (options.mouseControl) {
       if (controls.current) { return }
@@ -917,14 +1038,15 @@ export const Attitude3DPanel: React.FC<Props> = ({ options, data, width, height 
         series={data.series}
         options={options}
       />
-      <div className={styles.resetCameraButton}>
-        <IconButton
-          name="camera"
-          tooltip="Reset camera to default position"
-          aria-label="Reset camera to default position"
-          onClick={resetCamera}
-        />
-      </div>
+      <SceneControls
+        onResetCamera={resetCamera}
+        showGeometry={showGeometry}
+        onToggleGeometry={() => setShowGeometry(v => !v)}
+        hasGeometry={objectList.length > 0}
+        showVectors={showVectors}
+        onToggleVectors={() => setShowVectors(v => !v)}
+        hasVectors={vectorList.length > 0}
+      />
     </div>
   );
 };

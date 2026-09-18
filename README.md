@@ -14,7 +14,9 @@ Render WebGL-based 3D models directly inside Grafana dashboards. The panel is id
 - Keep models moving smoothly between refreshes with per-model **quaternion interpolation / extrapolation**.
 - Combine directional and ambient lighting to match the conditions your model represents.
 - Align each model's pivot, and toggle helper axes and background to keep orientation easy to understand.
+- Draw **any number of vectors (arrows)** in world coordinates, each with its own start point, direction, length, and truncation.
 - Overlay a **key parameters** text readout on top of the 3D view, showing any number of data field values in a fixed-size box.
+- Toggle camera reset, all-models visibility, and all-vectors visibility from a small icon overlay, always available in the corner of the view.
 
 Dashboards built with the earlier single-model version are **migrated automatically** — see [Migration](#migration).
 
@@ -35,6 +37,7 @@ Dashboards built with the earlier single-model version are **migrated automatica
 - **Smooth out the motion**: Enable per-model interpolation to keep the attitude advancing between dashboard refreshes.
 - **Shape the lighting**: Adjust directional light vectors, colors, and intensity, then blend in ambient light for shadow fill.
 - **Expose helpers and controls**: Toggle helper axes during debugging and enable mouse control for interactive reviews.
+- **Add a vector**: Press *Add Vector* under **Vectors** to draw an arrow in world coordinates, from a start point toward a direction, with its own length.
 - **Show key parameters**: Press *Add Key Parameter* under **Key Parameters** to overlay data field values on top of the model.
 
 ## Panel Options
@@ -68,6 +71,16 @@ Dashboards built with the earlier single-model version are **migrated automatica
 - **Helper**: Toggle helper axes to debug the world coordinate frame.
 - **Background Color**: Pick a solid background or set to transparent for overlay views.
 
+### Scene Controls (Overlay)
+
+A small stack of icon buttons is always shown in the top-right corner of the 3D view (above the Key Parameters overlay, if that is also anchored there):
+
+- **Camera / Reset**: Reset the camera to its default position — the same effect as the Camera settings above.
+- **Models / Show-Hide**: Show or hide every model at once, without changing any individual model's own *visible* setting in the Objects list.
+- **Vectors / Show-Hide**: Show or hide every vector at once, without changing any individual vector's own *visible* setting in the Vectors list.
+
+These toggles only affect the current browser session — they are not saved with the dashboard, so every viewer sees everything the panel's own options say should be visible when they first open it.
+
 ### Objects
 
 <img src="screenshots/menu1.png" alt="Objects tab with the model list and the selected model's settings" width="250" />
@@ -90,6 +103,29 @@ Position X/Y/Z, Quaternion X/Y/Z/W, and Brightness each choose their own source:
 
 - **Const**: A fixed numeric value.
 - **Field**: A value read from a query field, taking the latest row. The field can be given either as `Series.Field` (for example `A.q_x`) or as a bare field name (`q_x`). When more than one query returns a field of the same name, use the `Series.Field` form to disambiguate. For Brightness, values above `1` saturate to `1` and values below `0` saturate to `0`; brightness is applied on top of the model's own authored materials (only its color darkens), so a model that is already partially transparent in its source file keeps that translucency unchanged.
+
+### Vectors
+
+Add vectors (arrows) to the scene, then bind each one's start point, end point, and length.
+
+- **Add Vector**: Add a new vector (arrow) to the scene. The list below shows every vector; select one to edit it, use the eye icon to hide it, the arrows to reorder, and the trash icon to remove it.
+
+Each vector has the following settings:
+
+- **Name**: Display name, shown in the vector list.
+- **Color**: Color of the arrow. Vectors are drawn unlit, so Directional/Ambient Light settings do not change their color; any alpha channel in the color is ignored.
+- **Thickness**: Shaft radius, in world units. The arrow head is sized automatically from this.
+- **Start X / Y / Z**: Start point of the vector, in world coordinates. Default: `(0, 0, 0)`.
+- **End X / Y / Z**: End point of the vector, in world coordinates. Default: `(1, 1, 1)`. Only the *direction* from Start to End is used — the drawn length always comes from Magnitude, not the distance between Start and End.
+- **Magnitude**: Drawn length of the arrow, along the Start-to-End direction, in world units. Default: `1`. A value of `0` or less draws nothing.
+- **Truncate**: Fraction of Magnitude, from `0.0` to `1.0`, cut off from the start side. Default: `0` (draws the full length). For example, with Start `(0, 0, 0)`, End `(0, 0, 1)`, Magnitude `100`, and Truncate `0.8`, only the segment from `80` to `100` is drawn — a simple way to show just the outer part of a long vector. A Truncate at or beyond `1.0` draws nothing.
+
+Vectors are always positioned in world coordinates: they cannot be attached to a model, and cannot be selected as a Camera → Target.
+
+Start X/Y/Z, End X/Y/Z, Magnitude, and Truncate each choose their own source:
+
+- **Const**: A fixed numeric value.
+- **Field**: A value read from a query field, taking the latest row, given either as `Series.Field` or as a bare field name — the same rules as the other Const/Field settings in this panel.
 
 ### Key Parameters
 
