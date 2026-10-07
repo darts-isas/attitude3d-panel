@@ -3,6 +3,7 @@ import {
   clampBrightness,
   getDataFieldValue,
   getLastFieldValue,
+  getLastRawFieldValue,
   getNumericFieldOptions,
   getTimeFieldOptions,
   resolveField,
@@ -168,6 +169,23 @@ describe('getLastFieldValue', () => {
   it('returns undefined when every row is empty', () => {
     const field = { name: 'Sun_dx', type: FieldType.number, values: [null, undefined], config: {} } as unknown as Field
     expect(getLastFieldValue(field)).toBeUndefined()
+  })
+})
+
+describe('getLastRawFieldValue', () => {
+  const make = (values: unknown[]) => ({ name: 'f', type: FieldType.other, values, config: {} } as unknown as Field)
+
+  it('skips trailing null/undefined/NaN rows', () => {
+    expect(getLastRawFieldValue(make([3, null, undefined, NaN]))).toBe(3)
+  })
+
+  it('keeps string values, including non-numeric ones', () => {
+    expect(getLastRawFieldValue(make(['SAFE', null]))).toBe('SAFE')
+  })
+
+  it('returns undefined when every row is empty', () => {
+    expect(getLastRawFieldValue(make([null, NaN]))).toBeUndefined()
+    expect(getLastRawFieldValue(make([]))).toBeUndefined()
   })
 })
 

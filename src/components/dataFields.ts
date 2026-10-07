@@ -80,13 +80,23 @@ export const getLastFieldValue = (field: Field): number | undefined => {
   return undefined
 }
 
-// Unlike getLastFieldValue, this returns the raw last value untouched — needed for string
+// Unlike getLastFieldValue, this returns the raw value untouched — needed for string
 // fields (e.g. a mode name), where coercing through Number() would discard the value.
+// Trailing empty rows are skipped the same way: null/undefined, and non-finite numbers
+// (e.g. calculateField's NaN over a concatenate-padded row). Strings are always kept.
 export const getLastRawFieldValue = (field: Field): unknown => {
   const values = field.values
-  if (!values || values.length === 0) { return undefined }
+  if (!values) { return undefined }
 
-  return values[values.length - 1]
+  for (let i = values.length - 1; i >= 0; i--) {
+    const raw = values[i]
+    if (raw === null || raw === undefined) { continue }
+    if (typeof raw === 'number' && !Number.isFinite(raw)) { continue }
+
+    return raw
+  }
+
+  return undefined
 }
 
 // Brightness is always displayed in the 0-1 range: values above 1 saturate to fully bright
