@@ -109,14 +109,64 @@ describe('resolveField', () => {
   })
 })
 
+describe('display name resolution', () => {
+  // organize/renameByName sets config.displayName only; field.name keeps the raw name.
+  const renamed = (): DataFrame => ({
+    refId: 'A',
+    length: 1,
+    fields: [{ name: 'GNA.H2A.Q1_A', type: FieldType.number, values: [7], config: { displayName: 'Q1' } }],
+  } as unknown as DataFrame)
+
+  it('resolves a field by its display name, bare and qualified', () => {
+    expect(resolveField([renamed()], 'Q1')?.name).toBe('GNA.H2A.Q1_A')
+    expect(resolveField([renamed()], 'A.Q1')?.name).toBe('GNA.H2A.Q1_A')
+    expect(resolveFieldInFrame(renamed(), 'Q1')?.name).toBe('GNA.H2A.Q1_A')
+  })
+
+  it('still resolves by the raw field name', () => {
+    expect(resolveField([renamed()], 'GNA.H2A.Q1_A')).toBeDefined()
+  })
+
+  it('prefers an exact field.name over another field\'s displayName', () => {
+    const frame = {
+      refId: 'A',
+      length: 1,
+      fields: [
+        { name: 'a', type: FieldType.number, values: [1], config: { displayName: 'b' } },
+        { name: 'b', type: FieldType.number, values: [2], config: {} },
+      ],
+    } as unknown as DataFrame
+    expect(resolveField([frame], 'b')?.values[0]).toBe(2)
+  })
+
+  it('offers the display name in the editor options', () => {
+    expect(getNumericFieldOptions([renamed()]).map(o => o.value)).toEqual(['A.Q1'])
+  })
+})
+
 describe('getLastFieldValue', () => {
   it('returns undefined when there are no rows', () => {
     const field = { name: 'q_x', type: FieldType.number, values: [], config: {} } as unknown as Field
     expect(getLastFieldValue(field)).toBeUndefined()
   })
 
-  it('returns undefined for a non-finite last value', () => {
-    const field = { name: 'q_x', type: FieldType.number, values: [1, NaN], config: {} } as unknown as Field
+  it('returns undefined when no value is finite', () => {
+    const field = { name: 'q_x', type: FieldType.number, values: [NaN, NaN], config: {} } as unknown as Field
+    expect(getLastFieldValue(field)).toBeUndefined()
+  })
+
+  it('skips a trailing NaN row, e.g. calculateField output over a concatenated frame', () => {
+    const field = { name: 'Sun_dx', type: FieldType.number, values: [-5, NaN], config: {} } as unknown as Field
+    expect(getLastFieldValue(field)).toBe(-5)
+  })
+
+  it('skips trailing null/undefined rows left by a concatenate transformation', () => {
+    const field = { name: 'Sun_dx', type: FieldType.number, values: [-5, undefined, null], config: {} } as unknown as Field
+    expect(getLastFieldValue(field)).toBe(-5)
+  })
+
+  it('returns undefined when every row is empty', () => {
+    const field = { name: 'Sun_dx', type: FieldType.number, values: [null, undefined], config: {} } as unknown as Field
     expect(getLastFieldValue(field)).toBeUndefined()
   })
 })
