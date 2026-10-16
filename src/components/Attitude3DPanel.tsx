@@ -91,6 +91,23 @@ const parseColor = (color: string): {color: THREE.Color, transparency: boolean} 
 const ZERO_VEC = new THREE.Vector3(0, 0, 0)
 const UP = new THREE.Vector3(0, 1, 0)
 
+// Raise anisotropic filtering on every texture of a model so textures stay sharp when
+// viewed at grazing angles (default anisotropy 1 blurs them).
+const applyAnisotropy = (root: THREE.Object3D, anisotropy: number): void => {
+  root.traverse(child => {
+    if (!(child instanceof THREE.Mesh) || !child.material) { return }
+    const materials = Array.isArray(child.material) ? child.material : [child.material]
+    materials.forEach(material => {
+      Object.values(material).forEach(value => {
+        if (value instanceof THREE.Texture && value.anisotropy !== anisotropy) {
+          value.anisotropy = anisotropy
+          value.needsUpdate = true
+        }
+      })
+    })
+  })
+}
+
 // Clone each mesh's material once, right after a model is created, so brightness can be
 // applied per-object without leaking into other meshes/objects that might reference the
 // same shared material instance.
@@ -462,6 +479,7 @@ export const Attitude3DPanel: React.FC<Props> = ({ options, data, width, height 
     applyCenter(entry)
     prepareMaterialsForBrightness(obj)
     applyBrightnessTo(obj, entry.brightness)
+    applyAnisotropy(obj, renderer.current?.capabilities.getMaxAnisotropy() ?? 1)
 
     entry.root.add(obj)
   }
