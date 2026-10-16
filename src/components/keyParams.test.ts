@@ -106,6 +106,15 @@ describe('buildKeyParamLines', () => {
     expect(lines).toEqual(['Missing =    -'])
   })
 
+  it('uses the last valid row when the trailing rows are empty (concatenate + calculateField)', () => {
+    const series = [makeFrame('A', [{ name: 'Sun_dx', type: FieldType.number, values: [-1.5, NaN] }])]
+    const items = [{ ...createKeyParam('1', 'Sun'), field: 'Sun_dx', format: '%.2f' }]
+
+    const lines = buildKeyParamLines(items, series, { separator: SEPARATOR_MAP.equal, valueWidth: 6 })
+
+    expect(lines).toEqual(['Sun =  -1.50'])
+  })
+
   it('keeps the line count and name-column width fixed as values change', () => {
     const items = [{ ...createKeyParam('1', 'Roll'), field: 'roll' }]
     const short = [makeFrame('A', [{ name: 'roll', type: FieldType.number, values: [1] }])]

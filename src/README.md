@@ -47,6 +47,19 @@ Panel for rendering 3D objects
 * Background Color
   * Color of the background
 
+### Scene Controls (overlay)
+
+A small stack of icon buttons is always shown in the top-right corner of the panel:
+
+* Camera / Reset
+  * Reset the camera to its default position
+* Models / Show-Hide
+  * Show or hide every model at once, without changing any individual model's own visibility
+* Vectors / Show-Hide
+  * Show or hide every vector at once, without changing any individual vector's own visibility
+
+These toggles are only for the current browser session and are not saved with the dashboard.
+
 ### Objects
 
 * Add Model
@@ -75,6 +88,37 @@ Panel for rendering 3D objects
   * Field: Use the value from a query field. The field can be specified either as `Series.Field`
     (e.g. `A.q_x`) or as a bare field name (e.g. `q_x`). If more than one query returns a field
     with the same name, use the `Series.Field` form to disambiguate which query's field is used
+
+### Vectors
+
+* Add Vector
+  * Add a new vector (arrow) to the scene, drawn in world coordinates. Each vector gets its own
+    settings below (master/detail: pick a vector on the left to edit its settings on the right)
+  * Name
+    * Display name for the vector, shown in the vector list
+  * Color
+    * Color of the arrow. Vectors are drawn unlit, so light settings don't change their color;
+      any alpha channel in the color is ignored
+  * Thickness
+    * Shaft radius in world units. The arrow head is sized automatically from this
+  * Start X, Y, Z
+    * Start point of the vector, in world coordinates. Default: (0, 0, 0)
+  * End X, Y, Z
+    * End point of the vector, in world coordinates. Default: (1, 1, 1). Only the direction from
+      Start to End is used — the drawn length always comes from Magnitude
+  * Magnitude
+    * Drawn length of the arrow along the Start-to-End direction, in world units. Default: 1.
+      A value of 0 or less draws nothing
+  * Truncate
+    * Fraction (0.0-1.0) of Magnitude cut off from the start side. Default: 0 (draws the full
+      length). Example: Start (0, 0, 0), End (0, 0, 1), Magnitude 100, Truncate 0.8 draws only
+      the segment from 80 to 100. A value at or beyond 1.0 draws nothing
+
+  Vectors are always positioned in world coordinates — they can't be attached to a model, and
+  can't be selected as a Camera Target.
+
+  Start X/Y/Z, End X/Y/Z, Magnitude, and Truncate each have their own source (Const/Field), the
+  same as Position/Quaternion above.
 
 ## Quaternion Interpolation
 

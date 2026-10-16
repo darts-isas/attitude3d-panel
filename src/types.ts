@@ -41,6 +41,36 @@ export interface ModelObject {
   interpCatchUpMs: number;
 }
 
+/** One 3D vector (arrow) drawn in the scene, in world coordinates. */
+export interface VectorObject {
+  id: string;
+  name: string;
+  visible: boolean;
+
+  /** Start point in world coordinates. */
+  startX: DataField;
+  startY: DataField;
+  startZ: DataField;
+
+  /** End point. Only the direction of (end - start) is used — the drawn length
+   * comes from `magnitude`, not the distance between start and end. */
+  endX: DataField;
+  endY: DataField;
+  endZ: DataField;
+
+  /** Drawn length along the unit direction, in world units. 0 or less draws nothing. */
+  magnitude: DataField;
+
+  /** Fraction (0.0-1.0) of magnitude cut off from the start side.
+   * 0 draws the full length; a value at or beyond 1 draws nothing. */
+  truncate: DataField;
+
+  /** Nominal shaft radius in world units. The arrow head is sized from this. */
+  thickness: number;
+
+  color: string;
+}
+
 /** One key parameter shown in the text overlay, drawn on top of the 3D scene. */
 export interface KeyParam {
   id: string;
@@ -57,6 +87,7 @@ export interface KeyParam {
 
 export interface Attitude3DOptions {
   objects: ModelObject[];
+  vectors: VectorObject[];
 
   // Camera
   cameraTargetId: string; // 'origin' or a ModelObject id
@@ -128,6 +159,22 @@ export const createModelObject = (id: string, name: string): ModelObject => ({
   interpTimeField: '',
   interpBufferSize: 2,
   interpCatchUpMs: 300,
+});
+
+export const createVectorObject = (id: string, name: string): VectorObject => ({
+  id,
+  name,
+  visible: true,
+  startX: createDataField('0'),
+  startY: createDataField('0'),
+  startZ: createDataField('0'),
+  endX: createDataField('1'),
+  endY: createDataField('1'),
+  endZ: createDataField('1'),
+  magnitude: createDataField('1'),
+  truncate: createDataField('0'),
+  thickness: 0.02,
+  color: '#ffffff',
 });
 
 export const createKeyParam = (id: string, name: string): KeyParam => ({

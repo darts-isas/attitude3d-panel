@@ -5,6 +5,7 @@ import { useStyles2 } from '@grafana/ui'
 import { Attitude3DOptions, KeyParam } from '../types'
 import { buildKeyParamLines, SEPARATOR_MAP } from './keyParams'
 import { toCssColor } from './cssColor'
+import { SCENE_CONTROLS_HEIGHT } from './SceneControls'
 
 interface Props {
   keyParams: KeyParam[]
@@ -12,8 +13,9 @@ interface Props {
   options: Attitude3DOptions
 }
 
-// The vertical/horizontal offset for each edge. top additionally clears the reset-camera
-// button, which sits at top:4px/right:4px in Attitude3DPanel.tsx, when paired with right.
+// The vertical/horizontal offset for each edge. top additionally clears the scene-controls
+// stack, which sits at top:4px/right:4px in Attitude3DPanel.tsx, when paired with right —
+// see clearsSceneControls below.
 const VERTICAL_CSS: Record<Attitude3DOptions['keyParamVerticalPosition'], string> = {
   top: 'top: 4px;',
   bottom: 'bottom: 4px;',
@@ -38,17 +40,20 @@ interface StyleArgs {
 
 const getStyles = (theme: GrafanaTheme2, args: StyleArgs) => {
   const radius = args.shape === 'rounded' ? theme.shape.radius.default : '0'
-  const clearsResetButton = args.verticalPosition === 'top' && args.horizontalPosition === 'right'
+  // The scene-controls stack occupies the top-right corner; when the overlay would land in
+  // the same corner, push it down below the whole stack instead of padding around it — a
+  // 3-row stack is taller than any single line of the overlay, so padding alone can't clear it.
+  const clearsSceneControls = args.verticalPosition === 'top' && args.horizontalPosition === 'right'
+  const verticalCss = clearsSceneControls ? `top: ${4 + SCENE_CONTROLS_HEIGHT}px;` : VERTICAL_CSS[args.verticalPosition]
 
   return {
     // pointer-events: none keeps the overlay from stealing drag/orbit input from the
     // three.js canvas underneath — see OrbitControls in Attitude3DPanel.tsx.
     overlay: css`
       position: absolute;
-      ${VERTICAL_CSS[args.verticalPosition]}
+      ${verticalCss}
       ${HORIZONTAL_CSS[args.horizontalPosition]}
       padding: ${theme.spacing(0.5)} ${theme.spacing(1)};
-      ${clearsResetButton ? 'padding-right: 28px;' : ''}
       font-family: ${theme.typography.fontFamilyMonospace};
       font-size: ${args.fontSize}px;
       line-height: 1.4;

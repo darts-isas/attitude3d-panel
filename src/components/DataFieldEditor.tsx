@@ -12,6 +12,9 @@ interface DataFieldEditorProps {
   data?: DataFrame[]
   fieldKind?: 'number' | 'time'
   placeholder?: string
+  /** Shown under the label at all times (unlike placeholder, which disappears once a
+   * const value is typed) — use this for anything the user needs to keep in view. */
+  description?: string
 }
 
 const sourceTypeOptions: Array<{ label: string; value: DataSourceType }> = [
@@ -32,6 +35,7 @@ export const DataFieldEditor = ({
   data,
   fieldKind = 'number',
   placeholder,
+  description,
 }: DataFieldEditorProps) => {
   const styles = useStyles2(getStyles)
   const current = value ?? { sourceType: 'const' as DataSourceType, value: '0' }
@@ -44,7 +48,7 @@ export const DataFieldEditor = ({
 
   return (
     <div className={styles.wrapper}>
-      <Field label={label}>
+      <Field label={label} description={description}>
         <Stack direction="column" gap={0.5}>
           <RadioButtonGroup
             options={sourceTypeOptions}

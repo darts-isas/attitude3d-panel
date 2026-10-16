@@ -6,6 +6,15 @@ const frameLabel = (frame: DataFrame, index: number): string => {
   return label !== '' ? label : `Query-${index + 1}`
 }
 
+// The name a user sees (Table view, "Organize fields" renames): transformations such as
+// organize's renameByName only set config.displayName and leave field.name untouched.
+const shownName = (field: Field): string => field.config?.displayName ?? field.name
+
+// Exact field.name wins, so specs saved before display names were supported keep resolving
+// to the same field; displayName is the fallback.
+const findFieldByName = (frame: DataFrame, name: string): Field | undefined =>
+  frame.fields.find(f => f.name === name) ?? frame.fields.find(f => f.config?.displayName === name)
+
 // Try the qualified form "<label>.<fieldName>". Field names may themselves contain dots, so
 // the prefix is stripped and the remainder compared against the whole field name, rather than
 // splitting on the first dot.
@@ -13,7 +22,7 @@ const matchQualified = (frame: DataFrame, spec: string, label: string): Field | 
   const prefix = `${label}.`
   if (label === '' || !spec.startsWith(prefix)) { return undefined }
   const fieldName = spec.slice(prefix.length)
-  return frame.fields.find(f => f.name === fieldName)
+  return findFieldByName(frame, fieldName)
 }
 
 // Resolve a field spec ("<seriesLabel>.<fieldName>" or bare "<fieldName>") within a single
@@ -28,7 +37,7 @@ export const resolveFieldInFrame = (frame: DataFrame, spec: string, index = -1):
     if (byPosition) { return byPosition }
   }
 
-  return frame.fields.find(f => f.name === spec)
+  return findFieldByName(frame, spec)
 }
 
 // Resolve a field spec across all frames. Qualified matches (frame label matches the spec's
@@ -45,30 +54,49 @@ export const resolveField = (series: DataFrame[] | undefined | null, spec: strin
   }
 
   for (const frame of series) {
-    const field = frame.fields.find(f => f.name === spec)
+    const field = findFieldByName(frame, spec)
     if (field) { return field }
   }
 
   return undefined
 }
 
+// Returns the last finite value, skipping trailing empty rows: transformations such as
+// "concatenate" pad a field with empty rows when the frames being joined differ in length
+// (and "calculateField" turns those into NaN), so the literal last row can be empty even
+// though the field's latest real sample sits just before it.
 export const getLastFieldValue = (field: Field): number | undefined => {
   const values = field.values
-  if (!values || values.length === 0) { return undefined }
+  if (!values) { return undefined }
 
-  const value = Number(values[values.length - 1])
-  if (!Number.isFinite(value)) { return undefined }
+  for (let i = values.length - 1; i >= 0; i--) {
+    const raw = values[i]
+    if (raw === null || raw === undefined) { continue }
 
-  return value
+    const value = Number(raw)
+    if (Number.isFinite(value)) { return value }
+  }
+
+  return undefined
 }
 
-// Unlike getLastFieldValue, this returns the raw last value untouched — needed for string
+// Unlike getLastFieldValue, this returns the raw value untouched — needed for string
 // fields (e.g. a mode name), where coercing through Number() would discard the value.
+// Trailing empty rows are skipped the same way: null/undefined, and non-finite numbers
+// (e.g. calculateField's NaN over a concatenate-padded row). Strings are always kept.
 export const getLastRawFieldValue = (field: Field): unknown => {
   const values = field.values
-  if (!values || values.length === 0) { return undefined }
+  if (!values) { return undefined }
 
-  return values[values.length - 1]
+  for (let i = values.length - 1; i >= 0; i--) {
+    const raw = values[i]
+    if (raw === null || raw === undefined) { continue }
+    if (typeof raw === 'number' && !Number.isFinite(raw)) { continue }
+
+    return raw
+  }
+
+  return undefined
 }
 
 // Brightness is always displayed in the 0-1 range: values above 1 saturate to fully bright
@@ -113,11 +141,12 @@ const getFieldOptionsByType = (
     frame.fields.forEach(field => {
       if (fieldType !== undefined && field.type !== fieldType) { return }
 
-      const value = `${label}.${field.name}`
+      const shown = shownName(field)
+      const value = `${label}.${shown}`
       if (seen.has(value)) { return }
       seen.add(value)
 
-      options.push({ value, label: `${label} → ${field.name}` })
+      options.push({ value, label: `${label} → ${shown}` })
     })
   })
 

@@ -1,6 +1,6 @@
 import React, { useState } from 'react'
-import { css, cx } from '@emotion/css'
-import { GrafanaTheme2, StandardEditorProps } from '@grafana/data'
+import { cx } from '@emotion/css'
+import { StandardEditorProps } from '@grafana/data'
 import {
   Button,
   Combobox,
@@ -15,8 +15,7 @@ import {
 import { createDataField, createModelObject, DataField, ModelObject } from '../types'
 import { DataFieldEditor } from './DataFieldEditor'
 import { getTimeFieldOptions } from './dataFields'
-
-const createId = () => Date.now().toString(36) + Math.random().toString(36).slice(2, 6)
+import { createId, getListEditorStyles } from './listEditor'
 
 const centerOptions: Array<{ label: string; value: ModelObject['modelCenter'] }> = [
   { label: 'Origin', value: 'origin' },
@@ -24,81 +23,8 @@ const centerOptions: Array<{ label: string; value: ModelObject['modelCenter'] }>
   { label: 'Average', value: 'average' },
 ]
 
-const getStyles = (theme: GrafanaTheme2) => ({
-  header: css`
-    display: flex;
-    align-items: center;
-    justify-content: space-between;
-    margin-bottom: ${theme.spacing(1)};
-  `,
-  count: css`
-    color: ${theme.colors.text.secondary};
-    font-size: ${theme.typography.bodySmall.fontSize};
-  `,
-  list: css`
-    border: 1px solid ${theme.colors.border.weak};
-    border-radius: ${theme.shape.radius.default};
-    margin-bottom: ${theme.spacing(2)};
-    max-height: 220px;
-    overflow-y: auto;
-  `,
-  row: css`
-    display: flex;
-    align-items: center;
-    justify-content: space-between;
-    padding: ${theme.spacing(0.5)} ${theme.spacing(1)};
-    border-bottom: 1px solid ${theme.colors.border.weak};
-    cursor: pointer;
-
-    &:last-child {
-      border-bottom: none;
-    }
-
-    &:focus-visible {
-      outline: 2px solid ${theme.colors.primary.main};
-      outline-offset: -2px;
-    }
-  `,
-  rowSelected: css`
-    background: ${theme.colors.background.secondary};
-  `,
-  rowName: css`
-    overflow: hidden;
-    text-overflow: ellipsis;
-    white-space: nowrap;
-  `,
-  unnamed: css`
-    color: ${theme.colors.text.secondary};
-    font-style: italic;
-  `,
-  detail: css`
-    border: 1px solid ${theme.colors.border.weak};
-    border-radius: ${theme.shape.radius.default};
-    padding: ${theme.spacing(2)};
-  `,
-  placeholder: css`
-    color: ${theme.colors.text.secondary};
-    font-style: italic;
-    text-align: center;
-    padding: ${theme.spacing(2)};
-  `,
-  sectionTitle: css`
-    font-weight: ${theme.typography.fontWeightMedium};
-    margin: ${theme.spacing(2)} 0 ${theme.spacing(1)};
-
-    &:first-of-type {
-      margin-top: 0;
-    }
-  `,
-  hint: css`
-    color: ${theme.colors.text.secondary};
-    font-size: ${theme.typography.bodySmall.fontSize};
-    margin-top: ${theme.spacing(0.5)};
-  `,
-})
-
 export const ObjectsEditor = ({ value, onChange, context }: StandardEditorProps<ModelObject[]>) => {
-  const styles = useStyles2(getStyles)
+  const styles = useStyles2(getListEditorStyles)
   const objects = Array.isArray(value) ? value : []
   const [selectedIndex, setSelectedIndex] = useState<number>(objects.length > 0 ? 0 : -1)
 

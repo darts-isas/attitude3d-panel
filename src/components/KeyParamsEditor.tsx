@@ -1,74 +1,13 @@
 import React, { useState } from 'react'
-import { css, cx } from '@emotion/css'
-import { GrafanaTheme2, StandardEditorProps } from '@grafana/data'
+import { cx } from '@emotion/css'
+import { StandardEditorProps } from '@grafana/data'
 import { Button, Combobox, Field, IconButton, Input, Stack, useStyles2 } from '@grafana/ui'
 import { createKeyParam, KeyParam } from '../types'
 import { getAllFieldOptions } from './dataFields'
-
-const createId = () => Date.now().toString(36) + Math.random().toString(36).slice(2, 6)
-
-const getStyles = (theme: GrafanaTheme2) => ({
-  header: css`
-    display: flex;
-    align-items: center;
-    justify-content: space-between;
-    margin-bottom: ${theme.spacing(1)};
-  `,
-  count: css`
-    color: ${theme.colors.text.secondary};
-    font-size: ${theme.typography.bodySmall.fontSize};
-  `,
-  list: css`
-    border: 1px solid ${theme.colors.border.weak};
-    border-radius: ${theme.shape.radius.default};
-    margin-bottom: ${theme.spacing(2)};
-    max-height: 220px;
-    overflow-y: auto;
-  `,
-  row: css`
-    display: flex;
-    align-items: center;
-    justify-content: space-between;
-    padding: ${theme.spacing(0.5)} ${theme.spacing(1)};
-    border-bottom: 1px solid ${theme.colors.border.weak};
-    cursor: pointer;
-
-    &:last-child {
-      border-bottom: none;
-    }
-
-    &:focus-visible {
-      outline: 2px solid ${theme.colors.primary.main};
-      outline-offset: -2px;
-    }
-  `,
-  rowSelected: css`
-    background: ${theme.colors.background.secondary};
-  `,
-  rowName: css`
-    overflow: hidden;
-    text-overflow: ellipsis;
-    white-space: nowrap;
-  `,
-  unnamed: css`
-    color: ${theme.colors.text.secondary};
-    font-style: italic;
-  `,
-  detail: css`
-    border: 1px solid ${theme.colors.border.weak};
-    border-radius: ${theme.shape.radius.default};
-    padding: ${theme.spacing(2)};
-  `,
-  placeholder: css`
-    color: ${theme.colors.text.secondary};
-    font-style: italic;
-    text-align: center;
-    padding: ${theme.spacing(2)};
-  `,
-})
+import { createId, getListEditorStyles } from './listEditor'
 
 export const KeyParamsEditor = ({ value, onChange, context }: StandardEditorProps<KeyParam[]>) => {
-  const styles = useStyles2(getStyles)
+  const styles = useStyles2(getListEditorStyles)
   const items = Array.isArray(value) ? value : []
   const [selectedIndex, setSelectedIndex] = useState<number>(items.length > 0 ? 0 : -1)
 

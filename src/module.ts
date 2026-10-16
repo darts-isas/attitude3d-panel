@@ -2,6 +2,7 @@ import { PanelPlugin } from '@grafana/data'
 import { Attitude3DOptions, ORIGIN_TARGET_ID } from './types'
 import { Attitude3DPanel } from './components/Attitude3DPanel'
 import { ObjectsEditor } from './components/ObjectsEditor'
+import { VectorsEditor } from './components/VectorsEditor'
 import { TargetObjectEditor } from './components/TargetObjectEditor'
 import { KeyParamsEditor } from './components/KeyParamsEditor'
 import { migrateOptions } from './migrations'
@@ -185,6 +186,16 @@ export const plugin = new PanelPlugin<Attitude3DOptions>(Attitude3DPanel)
         name: '',
         description: 'Add and configure the 3D models in the scene',
         editor: ObjectsEditor,
+        defaultValue: [],
+      })
+      // Vectors
+      .addCustomEditor({
+        category: ['Vectors'],
+        id: 'vectors',
+        path: 'vectors',
+        name: '',
+        description: 'Add and configure the arrows drawn in the scene',
+        editor: VectorsEditor,
         defaultValue: [],
       })
       // Key Parameters — overlays a fixed-format text list of data values on top of the
