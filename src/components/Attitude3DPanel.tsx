@@ -519,7 +519,7 @@ export const Attitude3DPanel: React.FC<Props> = ({ options, data, width, height 
       alpha: true,
     })
     renderer.current.setSize(size.current.width, size.current.height)
-    renderer.current.setPixelRatio(Math.min(window.devicePixelRatio, 2))
+    renderer.current.setPixelRatio(window.devicePixelRatio)
 
     // Initial Light Settings
     directionalLight.current = new THREE.DirectionalLight(parseColor(options.directionalLightColor).color)
