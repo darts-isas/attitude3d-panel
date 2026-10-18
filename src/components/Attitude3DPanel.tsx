@@ -11,6 +11,7 @@ import { OBJLoader } from 'three/examples/jsm/loaders/OBJLoader'
 import { collectQuatSamples, sampleQuaternionAt, slerpPair, QuatSample } from './quaternionInterp'
 import { getDataFieldValue, clampBrightness } from './dataFields'
 import { disposeObject3D, removeAndDispose } from './threeDispose'
+import { modelOffsetQuaternion, upAxisQuaternion } from './modelAttitude'
 import { computeVectorShape } from './vectorGeometry'
 import { ColorTable } from './colorTable'
 import { KeyParamsOverlay } from './KeyParamsOverlay'
@@ -162,6 +163,7 @@ const applyBrightnessTo = (root: THREE.Object3D, brightness: number): void => {
 type ObjectEntry = {
   id: string
   root: THREE.Group
+  offset: THREE.Group                 // child of root holding the fixed model-axis offset rotation
   model: THREE.Object3D | null
   average: THREE.Vector3 | null       // vertex average, in the model's own local space
   sphereCenter: THREE.Vector3 | null  // bounding sphere center, in the model's own local space
@@ -234,6 +236,9 @@ export const Attitude3DPanel: React.FC<Props> = ({ options, data, width, height 
   const frame = useRef<HTMLDivElement | null>(null)
   const canvas = useRef<HTMLCanvasElement | null>(null)
   const scene = useRef<THREE.Scene | null>(null)
+  // Holds everything given in the input frame (models, vectors, directional light, axes helper).
+  // Its rotation implements the Up Axis option; camera math converts input-frame values with toScene.
+  const world = useRef<THREE.Group | null>(null)
   const size = useRef<{ width: number, height: number }>({ width, height })
   const camera = useRef<THREE.PerspectiveCamera | null>(null)
   const renderer = useRef<THREE.WebGLRenderer | null>(null)
@@ -258,7 +263,7 @@ export const Attitude3DPanel: React.FC<Props> = ({ options, data, width, height 
 
   // Per-object interpolation config and the camera-target id, refreshed every render so
   // the rAF loop (a closure created once in initRenderer) always sees the latest values.
-  const objectCfgRef = useRef<Map<string, { interpEnabled: boolean; interpCatchUpMs: number }>>(new Map())
+  const objectCfgRef = useRef<Map<string, { interpEnabled: boolean; interpCatchUpMs: number; quatInverse: boolean }>>(new Map())
   const cameraTargetIdRef = useRef<string>(ORIGIN_TARGET_ID)
 
   const lastData = useRef<unknown>(null)
@@ -326,6 +331,7 @@ export const Attitude3DPanel: React.FC<Props> = ({ options, data, width, height 
     objectCfgRef.current.set(o.id, {
       interpEnabled: isInterpActive(o),
       interpCatchUpMs: Number.isFinite(Number(o.interpCatchUpMs)) ? Math.max(0, Number(o.interpCatchUpMs)) : 0,
+      quatInverse: o.quatInverse === true,
     })
   })
 
@@ -387,8 +393,13 @@ export const Attitude3DPanel: React.FC<Props> = ({ options, data, width, height 
       else {
         entry.root.quaternion.copy(qNew)
       }
+      if (cfg.quatInverse) { entry.root.quaternion.invert() }
     })
   }
+
+  // Converts an input-frame vector to scene space (the world group only rotates, never moves).
+  const toScene = (v: THREE.Vector3): THREE.Vector3 =>
+    world.current ? v.clone().applyQuaternion(world.current.quaternion) : v.clone()
 
   // Keeps the camera's position/orientation relative to the current camera target as the
   // target moves, by translating the camera by the target's delta rather than recomputing
@@ -397,7 +408,7 @@ export const Attitude3DPanel: React.FC<Props> = ({ options, data, width, height 
     if (!camera.current) { return }
 
     const entry = objectsRef.current.get(cameraTargetIdRef.current)
-    const center = entry ? entry.root.position : ZERO_VEC
+    const center = toScene(entry ? entry.root.position : ZERO_VEC)
     const delta = center.clone().sub(lastTargetPos.current)
     if (delta.lengthSq() === 0) { return }
 
@@ -481,7 +492,7 @@ export const Attitude3DPanel: React.FC<Props> = ({ options, data, width, height 
     applyBrightnessTo(obj, entry.brightness)
     applyAnisotropy(obj, renderer.current?.capabilities.getMaxAnisotropy() ?? 1)
 
-    entry.root.add(obj)
+    entry.offset.add(obj)
   }
 
   const setupDefaultModel = (entry: ObjectEntry) => {
@@ -506,7 +517,7 @@ export const Attitude3DPanel: React.FC<Props> = ({ options, data, width, height 
     prepareMaterialsForBrightness(group)
     applyBrightnessTo(group, entry.brightness)
 
-    entry.root.add(group)
+    entry.offset.add(group)
   }
 
   const loadModelFor = (entry: ObjectEntry, uri: string) => {
@@ -553,6 +564,9 @@ export const Attitude3DPanel: React.FC<Props> = ({ options, data, width, height 
     if (!canvas.current) { return }
 
     scene.current = new THREE.Scene()
+    world.current = new THREE.Group()
+    world.current.quaternion.copy(upAxisQuaternion(options.upAxis))
+    scene.current.add(world.current)
 
     camera.current = new THREE.PerspectiveCamera(75, size.current.width / size.current.height, 0.1, 1000)
     camera.current.position.set(0, 0, 2)
@@ -574,7 +588,7 @@ export const Attitude3DPanel: React.FC<Props> = ({ options, data, width, height 
       - directionalLightDirectionZ,
     )
     directionalLight.current.intensity = parseFloat(options.directionalLightIntensity)
-    scene.current.add(directionalLight.current)
+    world.current.add(directionalLight.current)
 
     ambientLight.current = new THREE.AmbientLight(parseColor(options.ambientLightColor).color)
     ambientLight.current.intensity = parseFloat(options.ambientLightIntensity)
@@ -610,13 +624,13 @@ export const Attitude3DPanel: React.FC<Props> = ({ options, data, width, height 
       cancelAnimationFrame(rafId.current)
 
       objects.forEach(entry => {
-        scene.current?.remove(entry.root)
+        world.current?.remove(entry.root)
         disposeObject3D(entry.root)
       })
       objects.clear()
 
       vectors.forEach(entry => {
-        scene.current?.remove(entry.root)
+        world.current?.remove(entry.root)
         disposeObject3D(entry.root)
       })
       vectors.clear()
@@ -633,6 +647,7 @@ export const Attitude3DPanel: React.FC<Props> = ({ options, data, width, height 
       renderer.current = null
 
       scene.current = null
+      world.current = null
       camera.current = null
       directionalLight.current = null
       ambientLight.current = null
@@ -680,7 +695,7 @@ export const Attitude3DPanel: React.FC<Props> = ({ options, data, width, height 
       if (wantedIds.has(id)) { return }
 
       entry.loadToken++
-      scene.current?.remove(entry.root)
+      world.current?.remove(entry.root)
       disposeObject3D(entry.root)
       objectsRef.current.delete(id)
       changed = true
@@ -692,11 +707,14 @@ export const Attitude3DPanel: React.FC<Props> = ({ options, data, width, height 
 
       if (!entry) {
         const root = new THREE.Group()
-        scene.current?.add(root)
+        const offset = new THREE.Group()
+        root.add(offset)
+        world.current?.add(root)
 
         entry = {
           id: o.id,
           root,
+          offset,
           model: null,
           average: null,
           sphereCenter: null,
@@ -762,9 +780,11 @@ export const Attitude3DPanel: React.FC<Props> = ({ options, data, width, height 
         )
         if (q.lengthSq() > 0) {
           q.normalize()
+          if (o.quatInverse === true) { q.invert() }
           entry.root.quaternion.copy(q)
         }
       }
+      entry.offset.quaternion.copy(modelOffsetQuaternion(o))
 
       const brightness = clampBrightness(evalDataField(o.brightness, 1))
       if (brightness !== entry.brightness) {
@@ -845,7 +865,7 @@ export const Attitude3DPanel: React.FC<Props> = ({ options, data, width, height 
     vectorsRef.current.forEach((entry, id) => {
       if (wantedIds.has(id)) { return }
 
-      scene.current?.remove(entry.root)
+      world.current?.remove(entry.root)
       disposeObject3D(entry.root)
       vectorsRef.current.delete(id)
       idsChanged = true
@@ -868,7 +888,7 @@ export const Attitude3DPanel: React.FC<Props> = ({ options, data, width, height 
         arrow.add(shaft)
         arrow.add(head)
         root.add(arrow)
-        scene.current?.add(root)
+        world.current?.add(root)
 
         entry = { id: v.id, root, arrow, shaft, head, material, color: v.color || '#ffffff', extent: 0 }
         vectorsRef.current.set(v.id, entry)
@@ -922,7 +942,7 @@ export const Attitude3DPanel: React.FC<Props> = ({ options, data, width, height 
     if (!camera.current) { return }
 
     const targetEntry = objectsRef.current.get(cameraTargetIdRef.current)
-    const center = targetEntry ? targetEntry.root.position : new THREE.Vector3(0, 0, 0)
+    const center = toScene(targetEntry ? targetEntry.root.position : ZERO_VEC)
     const baseRadius = targetEntry ? effRadius(targetEntry) : encompassingRadius(objectsRef.current, vectorsRef.current)
 
     let distance = baseRadius * parseFloat(options.cameraDistance)
@@ -938,6 +958,7 @@ export const Attitude3DPanel: React.FC<Props> = ({ options, data, width, height 
     if (vec.lengthSq() === 0) { vec.set(0, 0, 1) }
     vec.normalize()
     vec.multiplyScalar(distance)
+    vec.copy(toScene(vec))
 
     camera.current.position.set(center.x + vec.x, center.y + vec.y, center.z + vec.z)
     camera.current.lookAt(center)
@@ -955,11 +976,13 @@ export const Attitude3DPanel: React.FC<Props> = ({ options, data, width, height 
     }
   }
 
-  // Camera Direction / Target
+  // Camera Direction / Target / Up Axis
   useEffect(() => {
+    world.current?.quaternion.copy(upAxisQuaternion(options.upAxis))
+    world.current?.updateMatrixWorld(true)
     resetCamera()
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [cameraDirectionX, cameraDirectionY, cameraDirectionZ, options.cameraDistance, options.cameraTargetId, sceneVersion])
+  }, [cameraDirectionX, cameraDirectionY, cameraDirectionZ, options.cameraDistance, options.cameraTargetId, options.upAxis, sceneVersion])
 
   // Directional Light
   useEffect(() => {
@@ -996,14 +1019,14 @@ export const Attitude3DPanel: React.FC<Props> = ({ options, data, width, height 
     if (!scene.current) { return }
 
     if (axesHelper.current) {
-      scene.current.remove(axesHelper.current)
+      world.current?.remove(axesHelper.current)
       axesHelper.current.dispose()
       axesHelper.current = null
     }
 
     if (options.showHelper) {
       axesHelper.current = new THREE.AxesHelper(encompassingRadius(objectsRef.current, vectorsRef.current))
-      scene.current.add(axesHelper.current)
+      world.current?.add(axesHelper.current)
     }
   }, [options.showHelper, sceneVersion])
 
@@ -1012,7 +1035,7 @@ export const Attitude3DPanel: React.FC<Props> = ({ options, data, width, height 
     if (!camera.current || !renderer.current) { return }
 
     const targetEntry = objectsRef.current.get(cameraTargetIdRef.current)
-    const center = targetEntry ? targetEntry.root.position : new THREE.Vector3(0, 0, 0)
+    const center = toScene(targetEntry ? targetEntry.root.position : ZERO_VEC)
     const baseRadius = targetEntry ? effRadius(targetEntry) : encompassingRadius(objectsRef.current, vectorsRef.current)
 
     if (options.mouseControl) {

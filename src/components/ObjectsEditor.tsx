@@ -239,6 +239,35 @@ export const ObjectsEditor = ({ value, onChange, context }: StandardEditorProps<
             onChange={(quatW: DataField) => updateObject(selectedIndex, { quatW })}
             data={context.data}
           />
+          <Field label="Inverse" description="Apply the inverse (conjugate) of the quaternion above.">
+            <Switch
+              value={selected.quatInverse === true}
+              onChange={(e) => updateObject(selectedIndex, { quatInverse: e.currentTarget.checked })}
+            />
+          </Field>
+
+          <div className={styles.sectionTitle}>Model Axis Offset [deg]</div>
+          <Field label="X" description="Fixed rotation in the model's own frame (XYZ Euler). Applied attitude is (q or q⁻¹) × offset.">
+            <Input
+              type="number"
+              value={selected.modelOffsetX ?? 0}
+              onChange={(e) => updateObject(selectedIndex, { modelOffsetX: parseFloat(e.currentTarget.value) || 0 })}
+            />
+          </Field>
+          <Field label="Y">
+            <Input
+              type="number"
+              value={selected.modelOffsetY ?? 0}
+              onChange={(e) => updateObject(selectedIndex, { modelOffsetY: parseFloat(e.currentTarget.value) || 0 })}
+            />
+          </Field>
+          <Field label="Z">
+            <Input
+              type="number"
+              value={selected.modelOffsetZ ?? 0}
+              onChange={(e) => updateObject(selectedIndex, { modelOffsetZ: parseFloat(e.currentTarget.value) || 0 })}
+            />
+          </Field>
 
           <div className={styles.sectionTitle}>Attitude Interpolation</div>
           <Field

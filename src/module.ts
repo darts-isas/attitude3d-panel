@@ -5,6 +5,7 @@ import { ObjectsEditor } from './components/ObjectsEditor'
 import { VectorsEditor } from './components/VectorsEditor'
 import { TargetObjectEditor } from './components/TargetObjectEditor'
 import { KeyParamsEditor } from './components/KeyParamsEditor'
+import { UpAxisEditor } from './components/UpAxisEditor'
 import { migrateOptions } from './migrations'
 
 export const plugin = new PanelPlugin<Attitude3DOptions>(Attitude3DPanel)
@@ -177,6 +178,15 @@ export const plugin = new PanelPlugin<Attitude3DOptions>(Attitude3DPanel)
         name: 'Background Color',
         description: 'Background color for the panel',
         defaultValue: '#000000',
+      })
+      .addCustomEditor({
+        category: ['Scene'],
+        id: 'upAxis',
+        path: 'upAxis',
+        name: 'Up Axis',
+        description: 'Which axis of the input frame points up on screen. Only the on-screen orientation changes.',
+        editor: UpAxisEditor,
+        defaultValue: 'y',
       })
       // Objects
       .addCustomEditor({

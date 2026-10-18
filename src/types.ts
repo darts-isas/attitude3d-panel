@@ -34,6 +34,16 @@ export interface ModelObject {
   quatZ: DataField;
   quatW: DataField;
 
+  /** Apply the inverse (conjugate) of the input quaternion instead of the quaternion itself.
+   * Existing dashboards without this field are treated as false. */
+  quatInverse?: boolean;
+
+  /** Fixed rotation of the model in its own local frame, in degrees (XYZ Euler order).
+   * The applied attitude is (q or q^-1) * offset. Missing values are treated as 0. */
+  modelOffsetX?: number;
+  modelOffsetY?: number;
+  modelOffsetZ?: number;
+
   // Quaternion interpolation / extrapolation, per object.
   interpEnabled: boolean;
   interpTimeField: string;
@@ -113,6 +123,9 @@ export interface Attitude3DOptions {
   // Scene
   showHelper: boolean;
   backgroundColor: string;
+  /** Which input-frame axis points up on screen. 'z' rotates the whole scene -90 deg about X.
+   * Existing dashboards without this field are treated as 'y'. */
+  upAxis?: UpAxis;
 
   // Key Parameters
   keyParams: KeyParam[];
@@ -131,6 +144,9 @@ export interface Attitude3DOptions {
   keyParamBorder: boolean;
   keyParamBorderColor: string;
 }
+
+/** Input-frame axis drawn as screen-up. 'y' draws input coordinates as they are. */
+export type UpAxis = 'y' | 'z';
 
 /** Camera target sentinel meaning the world origin rather than an object. */
 export const ORIGIN_TARGET_ID = 'origin';
@@ -155,6 +171,10 @@ export const createModelObject = (id: string, name: string): ModelObject => ({
   quatY: createDataField('0'),
   quatZ: createDataField('0'),
   quatW: createDataField('1'),
+  quatInverse: false,
+  modelOffsetX: 0,
+  modelOffsetY: 0,
+  modelOffsetZ: 0,
   interpEnabled: false,
   interpTimeField: '',
   interpBufferSize: 2,
