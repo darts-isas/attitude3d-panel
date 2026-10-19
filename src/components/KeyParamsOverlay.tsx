@@ -6,11 +6,14 @@ import { Attitude3DOptions, KeyParam } from '../types'
 import { buildKeyParamLines, SEPARATOR_MAP } from './keyParams'
 import { toCssColor } from './cssColor'
 import { SCENE_CONTROLS_HEIGHT } from './SceneControls'
+import { AXES_LEGEND_HEIGHT } from './AxesLegend'
 
 interface Props {
   keyParams: KeyParam[]
   series: DataFrame[] | undefined
   options: Attitude3DOptions
+  // Whether the AxesLegend occupies the bottom-right corner.
+  axesLegendShown: boolean
 }
 
 // The vertical/horizontal offset for each edge. top additionally clears the scene-controls
@@ -36,6 +39,7 @@ interface StyleArgs {
   shape: Attitude3DOptions['keyParamShape']
   border: boolean
   borderColor: string
+  axesLegendShown: boolean
 }
 
 const getStyles = (theme: GrafanaTheme2, args: StyleArgs) => {
@@ -44,7 +48,13 @@ const getStyles = (theme: GrafanaTheme2, args: StyleArgs) => {
   // the same corner, push it down below the whole stack instead of padding around it — a
   // 3-row stack is taller than any single line of the overlay, so padding alone can't clear it.
   const clearsSceneControls = args.verticalPosition === 'top' && args.horizontalPosition === 'right'
-  const verticalCss = clearsSceneControls ? `top: ${4 + SCENE_CONTROLS_HEIGHT}px;` : VERTICAL_CSS[args.verticalPosition]
+  // Likewise, the axes legend sits at bottom-right while the helper is shown; stack above it.
+  const clearsAxesLegend = args.axesLegendShown && args.verticalPosition === 'bottom' && args.horizontalPosition === 'right'
+  const verticalCss = clearsSceneControls
+    ? `top: ${4 + SCENE_CONTROLS_HEIGHT}px;`
+    : clearsAxesLegend
+      ? `bottom: ${4 + AXES_LEGEND_HEIGHT + 4}px;`
+      : VERTICAL_CSS[args.verticalPosition]
 
   return {
     // pointer-events: none keeps the overlay from stealing drag/orbit input from the
@@ -73,7 +83,7 @@ const getStyles = (theme: GrafanaTheme2, args: StyleArgs) => {
 // Text overlay drawn on top of the 3D scene, showing a fixed-format list of key parameter
 // values. Size depends only on the item count, names, and the Value Width setting — never
 // on the values themselves — so the box never resizes as data changes.
-export const KeyParamsOverlay: React.FC<Props> = ({ keyParams, series, options }) => {
+export const KeyParamsOverlay: React.FC<Props> = ({ keyParams, series, options, axesLegendShown }) => {
   const items = Array.isArray(keyParams) ? keyParams : []
 
   const verticalPosition = options.keyParamVerticalPosition ?? 'top'
@@ -100,6 +110,7 @@ export const KeyParamsOverlay: React.FC<Props> = ({ keyParams, series, options }
     shape,
     border,
     borderColor,
+    axesLegendShown,
   })
 
   const lines = buildKeyParamLines(items, series, {

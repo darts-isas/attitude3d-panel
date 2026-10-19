@@ -16,6 +16,7 @@ import { computeVectorShape } from './vectorGeometry'
 import { ColorTable } from './colorTable'
 import { KeyParamsOverlay } from './KeyParamsOverlay'
 import { SceneControls } from './SceneControls'
+import { AxesLegend } from './AxesLegend'
 
 interface Props extends PanelProps<Attitude3DOptions> {}
 
@@ -1078,6 +1079,7 @@ export const Attitude3DPanel: React.FC<Props> = ({ options, data, width, height 
         keyParams={Array.isArray(options.keyParams) ? options.keyParams : []}
         series={data.series}
         options={options}
+        axesLegendShown={!!options.showHelper}
       />
       <SceneControls
         onResetCamera={resetCamera}
@@ -1088,6 +1090,7 @@ export const Attitude3DPanel: React.FC<Props> = ({ options, data, width, height 
         onToggleVectors={() => setShowVectors(v => !v)}
         hasVectors={vectorList.length > 0}
       />
+      {options.showHelper && <AxesLegend />}
     </div>
   );
 };
