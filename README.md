@@ -70,6 +70,9 @@ Dashboards built with the earlier single-model version are **migrated automatica
 
 - **Helper**: Toggle helper axes to debug the world coordinate frame.
 - **Background Color**: Pick a solid background or set to transparent for overlay views.
+- **Up Axis**: Which input-frame axis points up on screen. `+Z` rotates the whole scene (models, vectors, and helper together), e.g. to draw J2000 north up.
+
+See [docs/model-frames.md](docs/model-frames.md) (Japanese) for how to author model frames and pick the quaternion settings.
 
 ### Scene Controls (Overlay)
 
@@ -96,7 +99,9 @@ Each model has the following settings:
 - **Scale**: Scale factor applied to the model.
 - **Brightness**: How dark the model appears under the same lighting, from `0` (black) to `1` (unchanged). Default: `1`. This darkens the model's own color — it does not change opacity/transparency, so the model stays fully solid and still correctly occludes other objects.
 - **Position X / Y / Z**: Position of the model in world coordinates.
-- **Quaternion X / Y / Z / W**: Orientation applied to the model.
+- **Quaternion X / Y / Z / W**: Orientation applied to the model — the rotation from the model's own (body) frame to world coordinates.
+- **Inverse**: Apply the inverse (conjugate) of the quaternion instead, for inputs that transform world components into body components in the Hamilton passive convention.
+- **Model Axis Offset [deg]**: Fixed rotation in the model's own frame (XYZ Euler). The applied attitude is (q or q⁻¹) × offset. Use it only when the asset's axes can't be aligned with the body frame in the file itself.
 - **Interpolation**: See [Quaternion Interpolation](#quaternion-interpolation).
 
 Position X/Y/Z, Quaternion X/Y/Z/W, and Brightness each choose their own source:

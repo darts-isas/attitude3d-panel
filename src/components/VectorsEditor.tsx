@@ -141,7 +141,10 @@ export const VectorsEditor = ({ value, onChange, context }: StandardEditorProps<
           </Field>
 
           <Field label="Color">
+            {/* ColorPickerInput copies `value` into internal state only on mount, so remount it
+                per vector — otherwise switching the selection keeps showing the previous color. */}
             <ColorPickerInput
+              key={selected.id}
               value={selected.color}
               returnColorAs="hex"
               onChange={(color) => updateVector(selectedIndex, { color })}
